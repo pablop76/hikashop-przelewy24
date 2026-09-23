@@ -225,6 +225,19 @@ odgadnięciem, w odróżnieniu od gołego numeru zamówienia.
 Dodatkowo zamówienie w statusie opłaconego nie pozwala rozpocząć płatności
 od nowa.
 
+**Ponowienie zapłaty bez płatnego HikaShopa.** Gdy płatność nie ruszy,
+klient widzi przycisk „Spróbuj zapłacić ponownie”. Do wersji 1.0.3 prowadził
+do kasy, a ta po złożeniu zamówienia jest pusta. Własne „zapłać teraz”
+(`order&task=pay`) HikaShop ma dopiero od wersji Essential, więc w Starterze
+klient zostawał bez wyjścia.
+
+Od 1.0.4 przycisk prowadzi do wtyczki (zadanie `notify` z `p24_action=retry`),
+która rejestruje transakcję z tym samym `sessionId` i od razu przekierowuje na
+stronę płatności P24. Adres niesie znacznik wyprowadzony z `order_token`
+zamówienia, inny niż znacznik powiadomień, więc nie da się go ułożyć dla
+cudzego zamówienia. Zamówienia opłaconego, anulowanego ani zwróconego nie da
+się w ten sposób opłacić ponownie.
+
 **Powiadomienia są weryfikowane.** Sprawdzamy podpis, identyfikator sprzedawcy,
 zgodność sesji z zapisaną przy zamówieniu oraz kwotę i walutę. Niezgodność
 w którymkolwiek z tych punktów oznacza, że zamówienia nie wolno ruszyć.
@@ -327,6 +340,7 @@ php tests/notification.php # sciezka powiadomienia, siec podstawiona atrapa
 php tests/refund.php       # zwroty, siec podstawiona atrapa
 php tests/blik.php         # BLIK w kasie, siec podstawiona atrapa
 php tests/duplikaty.php    # czy ponowienie nie dubluje transakcji, zywe P24
+php tests/retry.php        # przycisk ponowienia zaplaty, siec podstawiona atrapa
 ```
 
 `run.php` obejmuje przeliczanie kwot, kolejność kluczy w podpisach, odrzucanie

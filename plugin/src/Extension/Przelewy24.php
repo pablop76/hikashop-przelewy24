@@ -66,7 +66,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
     /**
      * Wersja wtyczki, wysyłana do P24 w nagłówku diagnostycznym.
      */
-    public const VERSION = '1.0.3';
+    public const VERSION = '1.0.4';
 
     protected $autoloadLanguage = true;
 
@@ -239,6 +239,32 @@ class Przelewy24 extends \hikashopPaymentPlugin
 
         $this->p24_retry_url = $this->buildRetryUrl($order);
 
+        $client = $this->startPayment($order, $config, $logger);
+
+        // Kod BLIK wpisany w kasie skraca drogę: klient zostaje
+        // w sklepie i potwierdza płatność w aplikacji banku.
+        // Pusty kod oznacza zwykłe przejście na stronę płatności.
+        if ($client !== null) {
+            $blikCode = $this->takeBlikCode($config);
+
+            if ($blikCode !== '') {
+                $this->chargeBlik($order, $client, $logger, $config, $blikCode);
+            }
+        }
+
+        return $this->showPage('end');
+    }
+
+    /**
+     * Rejestruje transakcję w P24 i przygotowuje adres strony płatności.
+     *
+     * Wspólne dla złożenia zamówienia i ponowienia zapłaty. Przy błędzie
+     * ustawia komunikat dla klienta w p24_error i zwraca null.
+     *
+     * @return ApiClient|null  klient API gotowy do dalszych wywołań albo null
+     */
+    protected function startPayment($order, Config $config, Logger $logger)
+    {
         try {
             $config->assertComplete();
 
@@ -259,9 +285,10 @@ class Przelewy24 extends \hikashopPaymentPlugin
                     'status'   => $order->order_status ?? '',
                 ]);
 
-                $this->p24_error = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_ALREADY_PAID');
+                $this->p24_error     = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_ALREADY_PAID');
+                $this->p24_retry_url = '';
 
-                return $this->showPage('end');
+                return null;
             }
 
             // Jeden identyfikator sesji na zamówienie, nie na próbę.
@@ -280,7 +307,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
                 OrderPaymentData::getInt($order, OrderPaymentData::ATTEMPTS)
             );
 
-            $client  = new ApiClient($config, $logger, self::VERSION, HIKASHOP_LIVE);
+            $client  = $this->buildClient($config, $logger);
             $service = new TransactionService($client, $config, $logger);
 
             $token = $service->register(new RegisterRequest(
@@ -291,7 +318,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
                     'PLG_HIKASHOPPAYMENT_PRZELEWY24_ORDER_DESCRIPTION',
                     $order->order_number
                 ),
-                email: (string) ($this->user->user_email ?? ''),
+                email: $this->customerEmail($order),
                 urlReturn: $this->buildReturnUrl($order),
                 urlStatus: $this->buildNotifyUrl($order),
                 country: $this->billingCountry($order),
@@ -318,14 +345,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
                 'kwota_gr'  => $amount,
             ]);
 
-            // Kod BLIK wpisany w kasie skraca drogę: klient zostaje
-            // w sklepie i potwierdza płatność w aplikacji banku.
-            // Pusty kod oznacza zwykłe przejście na stronę płatności.
-            $blikCode = $this->takeBlikCode($config);
-
-            if ($blikCode !== '') {
-                $this->chargeBlik($order, $client, $logger, $config, $blikCode);
-            }
+            return $client;
         } catch (ConfigurationException $exception) {
             $logger->error('Nie można rozpocząć płatności', [
                 'order_id' => $order->order_id ?? 0,
@@ -352,7 +372,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
             $this->p24_error = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_ERROR_REGISTER');
         }
 
-        return $this->showPage('end');
+        return null;
     }
 
     /**
@@ -365,6 +385,14 @@ class Przelewy24 extends \hikashopPaymentPlugin
     public function onPaymentNotification(&$statuses)
     {
         $app      = Factory::getApplication();
+
+        // Ten sam punkt wejścia obsługuje przycisk ponowienia zapłaty.
+        // HikaShop w wersji Starter nie ma własnego „zapłać teraz”,
+        // a zadanie notify jest dostępne w każdej wersji.
+        if ($app->input->getCmd('p24_action', '') === 'retry') {
+            return $this->handleRetry();
+        }
+
         $orderId  = (int) $app->input->get('order_id', 0, 'int');
         $urlToken = (string) $app->input->get('order_token', '', 'string');
 
@@ -976,9 +1004,14 @@ class Przelewy24 extends \hikashopPaymentPlugin
         return new Logger($this->name, $config->debug, $config->secrets());
     }
 
+    protected function buildClient(Config $config, Logger $logger)
+    {
+        return new ApiClient($config, $logger, self::VERSION, HIKASHOP_LIVE);
+    }
+
     protected function buildService(Config $config, Logger $logger)
     {
-        $client = new ApiClient($config, $logger, self::VERSION, HIKASHOP_LIVE);
+        $client = $this->buildClient($config, $logger);
 
         return new TransactionService($client, $config, $logger);
     }
@@ -1009,12 +1042,135 @@ class Przelewy24 extends \hikashopPaymentPlugin
     }
 
     /**
-     * Powrót do kasy, gdy płatność nie ruszyła.
+     * Adres ponowienia zapłaty za TO SAMO zamówienie.
+     *
+     * Wcześniej przycisk prowadził do kasy, ale koszyk jest już wtedy
+     * pusty, bo zamówienie powstało. Ponowienie z panelu klienta
+     * (order&task=pay) HikaShop daje dopiero od wersji Essential.
+     * Dlatego ponowienie obsługuje sama wtyczka.
      */
     protected function buildRetryUrl($order)
     {
-        return HIKASHOP_LIVE . 'index.php?option=com_hikashop&ctrl=checkout&task=step'
-            . '&step=0' . $this->url_itemid;
+        return HIKASHOP_LIVE . 'index.php?option=com_hikashop&ctrl=checkout&task=notify'
+            . '&notif_payment=' . $this->name
+            . '&p24_action=retry'
+            . '&order_id=' . (int) $order->order_id
+            . '&p24_retry=' . $this->retryToken($order)
+            . (string) ($this->url_itemid ?? '');
+    }
+
+    /**
+     * Znacznik adresu ponowienia.
+     *
+     * Wyprowadzony z tajnego order_token zamówienia, więc adresu nie da
+     * się ułożyć dla cudzego zamówienia. Celowo inny niż znacznik
+     * powiadomień P24, żeby jeden adres nie otwierał drugiego.
+     */
+    protected function retryToken($order)
+    {
+        return hash_hmac('sha256', 'p24-retry|' . (int) $order->order_id, (string) ($order->order_token ?? ''));
+    }
+
+    /**
+     * Ponawia zapłatę za zamówienie, którego płatność nie ruszyła.
+     *
+     * Rejestruje transakcję z tym samym identyfikatorem sesji, więc P24
+     * prowadzi do tej samej transakcji, a nie zakłada drugiej. Po udanej
+     * rejestracji przekierowuje klienta prosto na stronę płatności.
+     */
+    protected function handleRetry()
+    {
+        $app     = Factory::getApplication();
+        $orderId = (int) $app->input->get('order_id', 0, 'int');
+        $token   = (string) $app->input->get('p24_retry', '', 'string');
+
+        $dbOrder = $this->getOrder($orderId);
+
+        if (empty($dbOrder)
+            || !$this->loadPaymentParams($dbOrder)
+            || !hash_equals($this->retryToken($dbOrder), $token)
+        ) {
+            $this->writeToLog('P24 [BŁĄD] Odrzucone ponowienie płatności | order_id=' . $orderId);
+
+            $this->p24_error     = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_RETRY_INVALID');
+            $this->p24_retry_url = '';
+
+            return $this->renderPage('end');
+        }
+
+        $config = Config::fromPaymentParams($this->payment_params);
+        $logger = $this->buildLogger($config);
+
+        $this->loadOrderData($dbOrder);
+
+        // Zamówienia zwróconego albo anulowanego nie wolno opłacić
+        // ponownie: towar mógł już wrócić na stan.
+        $status = (string) ($dbOrder->order_status ?? '');
+
+        if (\in_array($status, array_filter([$config->refundStatus, 'cancelled', 'refunded']), true)) {
+            $logger->warning('Ponowienie zapłaty za zamknięte zamówienie', [
+                'order_id' => $orderId,
+                'status'   => $status,
+            ]);
+
+            $this->p24_error     = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_RETRY_UNAVAILABLE');
+            $this->p24_retry_url = '';
+
+            return $this->renderPage('end');
+        }
+
+        $this->p24_retry_url = $this->buildRetryUrl($dbOrder);
+
+        $logger->info('Klient ponawia zapłatę', ['order_id' => $orderId]);
+
+        if ($this->startPayment($dbOrder, $config, $logger) === null) {
+            return $this->renderPage('end');
+        }
+
+        $this->redirectTo($this->p24_paywall_url);
+
+        return true;
+    }
+
+    /**
+     * Zwraca widok wtyczki jako tekst.
+     *
+     * Zadanie notify HikaShopa przechwytuje wszystko, co zostanie wypisane,
+     * i odkłada to do dziennika. Na ekran trafia tylko zwrócony tekst.
+     */
+    protected function renderPage($name)
+    {
+        ob_start();
+        $this->showPage($name);
+
+        return (string) ob_get_clean();
+    }
+
+    protected function redirectTo($url)
+    {
+        Factory::getApplication()->redirect($url);
+    }
+
+    /**
+     * Adres e-mail klienta dla P24.
+     *
+     * Najpierw właściciel zamówienia, dopiero potem zalogowany użytkownik:
+     * przy ponowieniu zapłaty przeglądarka nie musi mieć sesji klienta.
+     */
+    protected function customerEmail($order)
+    {
+        $email = (string) ($order->customer->user_email ?? '');
+
+        if ($email === '' && !empty($order->order_user_id)) {
+            $customer = hikashop_get('class.user')->get((int) $order->order_user_id);
+            $email    = (string) ($customer->user_email ?? '');
+        }
+
+        if ($email === '') {
+            $email = (string) ($this->user->user_email ?? '');
+        }
+
+        return $email;
     }
 
     protected function currencyCode()
