@@ -7,8 +7,9 @@
 
 namespace WebService\Przelewy24;
 
-use Joomla\CMS\Http\Http;
 use Joomla\CMS\Http\HttpFactory;
+use Joomla\Http\Http;
+use Joomla\Http\Response;
 use Joomla\Registry\Registry;
 use WebService\Przelewy24\Exception\ApiException;
 
@@ -165,7 +166,7 @@ final class ApiClient
     /**
      * @param  array<string, mixed>|null  $payload
      */
-    private function send(string $method, string $url, ?array $payload): \Joomla\Http\Response
+    private function send(string $method, string $url, ?array $payload): Response
     {
         $http    = $this->getHttp();
         $headers = $this->headers();
