@@ -135,24 +135,35 @@ if ($token !== null) {
     echo '       ' . $paywall . PHP_EOL;
 
     echo PHP_EOL . '4. Odczyt transakcji po sessionId' . PHP_EOL;
+    // Ustalone doswiadczalnie 23.09.2026 na sandboxie: dopoki nikt nie
+    // zaplacil, P24 odpowiada na ten endpoint kodem 404 "Transaction not
+    // found". Zarejestrowanie transakcji nie wystarczy, zeby dalo sie ja
+    // odczytac. Wniosek dla wtyczki: strona powrotu klienta NIE MOZE
+    // opierac sie na tym endpoincie, bo dla nieoplaconej platnosci nie
+    // dostanie zadnej informacji.
     $transakcja = $usluga->findBySessionId($sessionId);
-    wynik('P24 zna zarejestrowana sesje', is_array($transakcja));
-
-    if (is_array($transakcja)) {
-        $kwotaZwrocona = (int) ($transakcja['amount'] ?? 0);
-        wynik('kwota po stronie P24 zgadza sie co do grosza', $kwotaZwrocona === $kwotaGrosze, $kwotaZwrocona . ' gr');
-        wynik('waluta zgadza sie', ($transakcja['currency'] ?? '') === 'PLN');
-        wynik('status transakcji jest oczekujacy, nie oplacony', (int) ($transakcja['status'] ?? -1) === 0, 'status ' . ($transakcja['status'] ?? '?'));
-    }
+    wynik('nieoplacona transakcja nie jest jeszcze widoczna po sessionId', $transakcja === null);
 
     echo PHP_EOL . '5. Powtorna rejestracja tego samego sessionId' . PHP_EOL;
-    // Wtyczka IgnisDev wysyla w tym polu numer zamowienia, wiec przy
-    // ponowieniu platnosci trafia dokladnie w ten przypadek.
+    // Ustalone doswiadczalnie 23.09.2026 na sandboxie: P24 PRZYJMUJE
+    // powtorzony sessionId i zwraca drugi token. Nie potwierdza sie wiec
+    // teza, ze ponowienie platnosci odbija sie od P24 z powodu
+    // powtorzonego identyfikatora sesji.
+    //
+    // Wlasny sessionId na kazda probe i tak zostaje, bo dwie transakcje
+    // o tym samym identyfikatorze sprawiaja, ze powiadomienie przestaje
+    // jednoznacznie wskazywac probe, ktorej dotyczy.
+    $drugiToken = null;
+
     try {
-        $usluga->register($zadanie);
-        wynik('P24 odrzuca powtorzony sessionId', false, 'P24 przyjelo powtorzenie, co przeczy zalozeniu');
+        $drugiToken = $usluga->register($zadanie);
+        wynik('P24 przyjmuje powtorzony sessionId', is_string($drugiToken) && $drugiToken !== '');
+        // P24 zwraca ten sam token, czyli rejestracja jest idempotentna
+        // wzgledem sessionId przy niezmienionej kwocie. Ponowienie
+        // platnosci prowadzi klienta na te sama strone platnosci.
+        wynik('powtorzenie zwraca ten sam token co pierwsza proba', $drugiToken === $token);
     } catch (ApiException $e) {
-        wynik('P24 odrzuca powtorzony sessionId', true, 'HTTP ' . $e->getHttpStatus() . ', ' . $e->getMessage());
+        wynik('P24 przyjmuje powtorzony sessionId', false, 'HTTP ' . $e->getHttpStatus() . ', ' . $e->getMessage());
     }
 
     echo PHP_EOL . '6. Weryfikacja transakcji, za ktora nikt nie zaplacil' . PHP_EOL;
