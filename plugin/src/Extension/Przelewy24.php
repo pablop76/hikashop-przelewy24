@@ -231,7 +231,24 @@ class Przelewy24 extends \hikashopPaymentPlugin
                 throw new ConfigurationException('Kwota zamówienia jest zerowa lub ujemna');
             }
 
-            $sessionId = SessionId::generate((int) $order->order_id);
+            // Zamówienie opłacone nie może być opłacone po raz drugi.
+            // Bez tej blokady klient, który wróci do kasy, zakłada w P24
+            // kolejną transakcję i płaci drugi raz za to samo.
+            if ($this->isAlreadyPaid($order, $config)) {
+                $logger->warning('Próba ponownej zapłaty za opłacone zamówienie', [
+                    'order_id' => $order->order_id,
+                    'status'   => $order->order_status ?? '',
+                ]);
+
+                $this->p24_error = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_ALREADY_PAID');
+
+                return $this->showPage('end');
+            }
+
+            // Jeden identyfikator sesji na zamówienie, nie na próbę.
+            // Ponowienie zapłaty ma prowadzić do TEJ SAMEJ transakcji
+            // w P24, inaczej klient może zapłacić dwa razy.
+            $sessionId = OrderPaymentData::sessionIdFor($order, (int) $order->order_id);
 
             // Zapisujemy próbę PRZED wysłaniem rejestracji. Gdyby P24
             // zdążyło przysłać powiadomienie, zanim wrócimy z odpowiedzią,

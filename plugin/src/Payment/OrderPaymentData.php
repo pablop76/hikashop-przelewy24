@@ -127,7 +127,18 @@ final class OrderPaymentData
     }
 
     /**
-     * Zapisuje dane nowej próby zapłaty i zwiększa licznik prób.
+     * Zapisuje dane próby zapłaty i zwiększa licznik prób.
+     *
+     * Identyfikator sesji NIE jest tu nadpisywany nowym, jeżeli przy
+     * zamówieniu już jakiś jest. Powód jest poważny: nowy identyfikator
+     * zakłada w P24 drugą, osobną transakcję, więc klient może zapłacić
+     * dwa razy za to samo zamówienie. Dodatkowo powiadomienie o pierwszej
+     * zapłacie przestaje pasować do tego, co mamy zapisane, i zostaje
+     * odrzucone jako dotyczące obcej sesji.
+     *
+     * Ponowna rejestracja z tym samym identyfikatorem jest bezpieczna:
+     * P24 zwraca wtedy ten sam token i prowadzi klienta do tej samej
+     * transakcji. Sprawdzone na sandboksie 23.09.2026.
      */
     public static function startAttempt(
         int $orderId,
@@ -141,10 +152,24 @@ final class OrderPaymentData
             self::AMOUNT     => $amountInMinorUnits,
             self::CURRENCY   => $currency,
             self::ATTEMPTS   => $previousAttempts + 1,
-            // Token i identyfikator P24 dotyczą poprzedniej próby,
-            // więc przy nowej muszą zniknąć.
-            self::TOKEN        => '',
-            self::P24_ORDER_ID => 0,
         ]);
+    }
+
+    /**
+     * Zwraca identyfikator sesji zamówienia, tworząc go przy pierwszej próbie.
+     *
+     * Jeden identyfikator na zamówienie, nie na próbę. Losowa część
+     * chroni przed odgadnięciem, a stałość w czasie przed zdublowaniem
+     * płatności.
+     */
+    public static function sessionIdFor(?object $order, int $orderId): string
+    {
+        $zapisany = self::getString($order, self::SESSION_ID);
+
+        if ($zapisany !== '' && SessionId::isValid($zapisany)) {
+            return $zapisany;
+        }
+
+        return SessionId::generate($orderId);
     }
 }

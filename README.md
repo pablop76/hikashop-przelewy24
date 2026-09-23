@@ -158,11 +158,27 @@ które mnoży przed zaokrągleniem. Popularny zapis `round($cena, 2) * 100` daje
 dla około 9% kwot liczbę zmiennoprzecinkową, na przykład 1,15 zł jako
 `114.99999999999999`, i taką wartość `json_encode` wysyła do P24.
 
-**Każda próba zapłaty ma własny `sessionId`.** Nie dlatego, że P24 odrzuca
-powtórzenia — sprawdzone na sandboksie, przyjmuje je i zwraca ten sam token.
-Powód jest inny: gdyby dwie próby zapłaty dzieliły identyfikator sesji,
-powiadomienie przestałoby jednoznacznie wskazywać, której próby dotyczy.
-Powiązanie z zamówieniem trzymamy po stronie sklepu.
+**Jeden `sessionId` na zamówienie, nie na próbę zapłaty.** To rozstrzygnięcie
+kosztowało nas prawdziwą wpadkę, więc warto je znać.
+
+Pierwotnie każda próba dostawała własny identyfikator. Wydawało się to
+bezpieczniejsze, bo powiadomienie zawsze wskazywało jedną, konkretną próbę.
+W praktyce otwierało drogę do podwójnej zapłaty:
+
+1. Klient płaci. P24 księguje transakcję
+2. Powiadomienie nie dociera (awaria, timeout, adres nieosiągalny)
+3. Klient widzi zamówienie jako nieopłacone i płaci ponownie
+4. Nowy identyfikator zakłada w P24 **drugą transakcję** i nadpisuje zapisany
+   przy zamówieniu. Klient płaci drugi raz, a powiadomienie o pierwszej
+   zapłacie zostaje potem odrzucone jako dotyczące obcej sesji
+
+Teraz identyfikator powstaje raz, przy pierwszej próbie, i jest ponawiany.
+Rejestracja z tym samym identyfikatorem zwraca ten sam token, więc klient
+wraca do **tej samej** transakcji. Losowa część nadal chroni przed
+odgadnięciem, w odróżnieniu od gołego numeru zamówienia.
+
+Dodatkowo zamówienie w statusie opłaconego nie pozwala rozpocząć płatności
+od nowa.
 
 **Powiadomienia są weryfikowane.** Sprawdzamy podpis, identyfikator sprzedawcy,
 zgodność sesji z zapisaną przy zamówieniu oraz kwotę i walutę. Niezgodność
@@ -192,7 +208,8 @@ zarejestrowanej, ale nieopłaconej transakcji P24 odpowiada `HTTP 404
 Transaction not found`. Strona powrotu klienta nie może więc opierać się
 na tym endpoincie, bo dla porzuconej płatności nie dostanie nic.
 
-**Rejestracja jest idempotentna względem `sessionId`.** Powtórne wysłanie
+**Rejestracja jest idempotentna względem `sessionId`.** Na tym opiera się
+ochrona przed podwójną zapłatą. Powtórne wysłanie
 `transaction/register` z tym samym identyfikatorem sesji i tą samą kwotą
 nie kończy się błędem — P24 zwraca ten sam token co za pierwszym razem.
 
@@ -222,6 +239,7 @@ tests/
   notification.php               ścieżka powiadomienia
   refund.php                     zwroty
   blik.php                       BLIK w kasie
+  duplikaty.php                  ochrona przed podwójną zapłatą
   bootstrap-joomla.php           wspólny rozruch testów integracyjnych
 ```
 
@@ -254,7 +272,7 @@ ani od Joomli poza klientem HTTP.
 
 ## Testy
 
-Sześć zestawów, każdy o innym zasięgu.
+Siedem zestawów, każdy o innym zasięgu.
 
 ```bash
 php tests/run.php          # biblioteka, bez Joomli i bez sieci
@@ -263,6 +281,7 @@ php tests/joomla.php       # wtyczka w zainstalowanej Joomli z HikaShopem
 php tests/notification.php # sciezka powiadomienia, siec podstawiona atrapa
 php tests/refund.php       # zwroty, siec podstawiona atrapa
 php tests/blik.php         # BLIK w kasie, siec podstawiona atrapa
+php tests/duplikaty.php    # czy ponowienie nie dubluje transakcji, zywe P24
 ```
 
 `run.php` obejmuje przeliczanie kwot, kolejność kluczy w podpisach, odrzucanie
