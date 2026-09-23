@@ -308,7 +308,7 @@ class plgHikashoppaymentPrzelewy24 extends hikashopPaymentPlugin
         try {
             $config->assertComplete();
 
-            $notification = Notification::fromRequestBody((string) file_get_contents('php://input'));
+            $notification = Notification::fromRequestBody($this->readNotificationBody());
 
             $storedSessionId = OrderPaymentData::getString($dbOrder, OrderPaymentData::SESSION_ID);
             $currencyCode    = $this->currencyCode();
@@ -321,14 +321,10 @@ class plgHikashoppaymentPrzelewy24 extends hikashopPaymentPlugin
 
             $logger->info('Powiadomienie przyjęte', ['order_id' => $orderId] + $notification->toLogContext());
 
-            OrderPaymentData::store($orderId, [
-                OrderPaymentData::P24_ORDER_ID => $notification->p24OrderId,
-                OrderPaymentData::METHOD_ID    => $notification->methodId,
-            ]);
-
-            // Powiadomienie potrafi przyjść więcej niż raz. Bez tego
-            // sprawdzenia każde powtórzenie ruszałoby stan magazynowy
-            // i wysyłało klientowi kolejny e-mail.
+            // Powiadomienie potrafi przyjść więcej niż raz. Sprawdzamy to
+            // przed jakimkolwiek zapisem: bez tego każde powtórzenie
+            // ruszałoby stan magazynowy, wysyłało klientowi kolejny e-mail
+            // i dokładało wpis do historii zamówienia.
             if ($this->isAlreadyPaid($dbOrder, $config)) {
                 $logger->info('Powtórzone powiadomienie pominięte, zamówienie już opłacone', [
                     'order_id' => $orderId,
@@ -337,6 +333,11 @@ class plgHikashoppaymentPrzelewy24 extends hikashopPaymentPlugin
 
                 return true;
             }
+
+            OrderPaymentData::store($orderId, [
+                OrderPaymentData::P24_ORDER_ID => $notification->p24OrderId,
+                OrderPaymentData::METHOD_ID    => $notification->methodId,
+            ]);
 
             $service = $this->buildService($config, $logger);
 
@@ -357,7 +358,31 @@ class plgHikashoppaymentPrzelewy24 extends hikashopPaymentPlugin
                 OrderPaymentData::VERIFIED_AT => gmdate('c'),
             ]);
 
-            $this->modifyOrder($orderId, $config->verifiedStatus, true, true);
+            // Zmiana statusu wysyła też powiadomienie do klienta. Gdyby
+            // wysyłka się wywróciła, zapłata i tak jest zaksięgowana,
+            // więc nie wolno odpowiedzieć P24, że obsługa się nie udała.
+            // Inaczej bramka ponawia powiadomienie bez potrzeby.
+            try {
+                $this->modifyOrder($orderId, $config->verifiedStatus, true, true);
+            } catch (Throwable $exception) {
+                $logger->error('Błąd przy zmianie statusu zamówienia', [
+                    'order_id' => $orderId,
+                    'powod'    => $exception->getMessage(),
+                ]);
+            }
+
+            // O powodzeniu decyduje stan zamówienia w bazie, nie to,
+            // czy wszystkie czynności poboczne przeszły bez potknięcia.
+            $paid = $this->isAlreadyPaid($this->getOrder($orderId), $config);
+
+            if (!$paid) {
+                $logger->error('Zapłata potwierdzona, ale status zamówienia się nie zmienił', [
+                    'order_id' => $orderId,
+                    'oczekiwany_status' => $config->verifiedStatus,
+                ]);
+
+                return false;
+            }
 
             $logger->info('Zamówienie oznaczone jako opłacone', [
                 'order_id' => $orderId,
@@ -392,6 +417,17 @@ class plgHikashoppaymentPrzelewy24 extends hikashopPaymentPlugin
 
             return false;
         }
+    }
+
+    /**
+     * Surowa treść powiadomienia przysłanego przez P24.
+     *
+     * Wydzielone do osobnej metody, żeby testy mogły podstawić własną
+     * treść bez udawania żądania HTTP.
+     */
+    protected function readNotificationBody()
+    {
+        return (string) file_get_contents('php://input');
     }
 
     /**
