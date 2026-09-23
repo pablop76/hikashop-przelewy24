@@ -25,6 +25,12 @@ final class BlikService
     /** Kod BLIK to dokładnie sześć cyfr. */
     private const CODE_PATTERN = '/^\d{6}$/';
 
+    /**
+     * Formularz wsparcia technicznego API. P24 nie podaje adresu e-mail,
+     * a dokumentacja odsyła tu przy usługach spoza domyślnych.
+     */
+    public const SUPPORT_FORM_URL = 'https://www.przelewy24.pl/centrum-pomocy/wsparcie-techniczne-api/brakuje-odpowiedzi-na-twoje-pytanie';
+
     public function __construct(
         private readonly ApiClient $client,
         private readonly Logger $logger
@@ -83,6 +89,18 @@ final class BlikService
                 'http'  => $exception->getHttpStatus(),
                 'powod' => $powod->value,
             ]);
+
+            // 401 tutaj prawie nigdy nie oznacza złego klucza: ten sam klucz
+            // przed chwilą zarejestrował transakcję. P24 tak odpowiada, gdy
+            // na koncie nie ma usługi BLIK Level 0, której domyślnie nie
+            // włącza. Bez tej linijki diagnoza zaczyna się od sprawdzania kluczy.
+            if ($exception->isAuthenticationFailure()) {
+                $this->logger->warning(
+                    'Najpewniej BLIK Level 0 (chargeByCode) nie jest włączony na koncie P24. '
+                    . 'To usługa spoza domyślnych, włącza ją opiekun klienta albo wsparcie przez formularz: '
+                    . self::SUPPORT_FORM_URL
+                );
+            }
 
             throw new BlikException($exception->getMessage(), $powod, $exception);
         }

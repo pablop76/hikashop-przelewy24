@@ -66,7 +66,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
     /**
      * Wersja wtyczki, wysyłana do P24 w nagłówku diagnostycznym.
      */
-    public const VERSION = '1.0.2';
+    public const VERSION = '1.0.3';
 
     protected $autoloadLanguage = true;
 
@@ -189,6 +189,15 @@ class Przelewy24 extends \hikashopPaymentPlugin
         // Brak wpisu IP w panelu P24 daje dokładnie ten sam błąd 401, co
         // zły klucz, więc bez tej podpowiedzi diagnoza bywa długa.
         $app->enqueueMessage(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_IP_REMINDER'), 'notice');
+
+        // BLIK w kasie wymaga usługi, której P24 domyślnie nie włącza.
+        // Bez niej płatność kodem kończy się 401, co łatwo wziąć za zły klucz.
+        if ($config->blikInShop) {
+            $app->enqueueMessage(
+                Text::sprintf('PLG_HIKASHOPPAYMENT_PRZELEWY24_BLIK_LEVEL0_REMINDER', BlikService::SUPPORT_FORM_URL),
+                'notice'
+            );
+        }
 
         // Włączony wyzwalacz zwrotu oddaje klientom prawdziwe pieniądze
         // przy zwykłej zmianie statusu zamówienia. Sprzedawca musi o tym

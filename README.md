@@ -84,9 +84,19 @@ Bez niej rejestracja transakcji przechodzi, a samo obciążenie kodem kończy si
 komunikat o nieudanym BLIK-u i przycisk przejścia na stronę P24, więc
 zamówienie nie przepada. W dzienniku płatności wygląda to tak:
 
-```
+```text
 P24 odrzuciło żądanie | endpoint=api/v1/paymentMethod/blik/chargeByCode opis=HTTP 401, kod 401, Incorrect authentication
+P24 [UWAGA] Najpewniej BLIK Level 0 (chargeByCode) nie jest włączony na koncie P24. ...
 ```
+
+Druga linijka to podpowiedź dopisywana przez wtyczkę od 1.0.3. Przy włączonym
+BLIK-u w kasie panel konfiguracji metody płatności też przypomina o tej usłudze.
+
+Jak ją włączyć: dokumentacja P24 wymienia jako domyślne tylko `register`,
+`verify`, `refund`, `paymentMethods` i `getBySessionId`. Pozostałe usługi
+włącza opiekun klienta. Przelewy24 nie podają adresu e-mail wsparcia, jest
+[formularz kontaktowy](https://www.przelewy24.pl/centrum-pomocy/wsparcie-techniczne-api/brakuje-odpowiedzi-na-twoje-pytanie).
+Poproś o `paymentMethod/blik/chargeByCode` osobno dla sandboxa i produkcji.
 
 Pole nie ma przycisku „Wyślij”, który HikaShop domyślnie dokłada pod własnymi
 polami metody płatności. Ten przycisk tylko zapisywał blok płatności, więc

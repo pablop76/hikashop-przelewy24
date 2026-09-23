@@ -226,6 +226,43 @@ $config1 = Config::fromPaymentParams((object) ['blik_in_shop' => '1']);
 wynik('domyslnie BLIK w kasie jest wylaczony', false, Config::fromPaymentParams(null)->blikInShop);
 wynik('zero wylacza', false, $config0->blikInShop);
 wynik('jedynka wlacza', true, $config1->blikInShop);
+wynik('pod polem BLIK nie ma przycisku Wyslij HikaShopa', true, !empty($metodaZBlik->custom_html_no_btn));
+
+echo PHP_EOL . '9. BLIK Level 0 niewlaczony na koncie' . PHP_EOL;
+
+// Na zywym sandboksie 23.09.2026: rejestracja przechodzi, a chargeByCode
+// daje 401 Incorrect authentication, bo konto nie ma usugi BLIK Level 0.
+$linieLogu = [];
+$loggerZapis = new Logger('przelewy24', false, $config->secrets(), static function (string $linia) use (&$linieLogu): void {
+    $linieLogu[] = $linia;
+});
+$uslugaZapis = new BlikService(
+    new ApiClient($config, $loggerZapis, '1.0.0', 'https://haskap.test', new Http([], new TransportBlik(401, '{"error":"Incorrect authentication","code":401}'))),
+    $loggerZapis
+);
+
+$powod401 = null;
+try {
+    $uslugaZapis->chargeByCode('TOKEN', '777123');
+} catch (BlikException $e) {
+    $powod401 = $e->getReason();
+}
+
+$podpowiedz = array_values(array_filter($linieLogu, static fn (string $l): bool => str_contains($l, 'BLIK Level 0')));
+wynik('401 konczy sie odrzuceniem BLIK-a', BlikError::GeneralError, $powod401);
+wynik('dziennik podpowiada brak BLIK Level 0', 1, count($podpowiedz));
+wynik('podpowiedz wskazuje formularz wsparcia P24', true, isset($podpowiedz[0]) && str_contains($podpowiedz[0], BlikService::SUPPORT_FORM_URL));
+
+$linieLogu = [];
+try {
+    $uslugaZapis = new BlikService(
+        new ApiClient($config, $loggerZapis, '1.0.0', 'https://haskap.test', new Http([], new TransportBlik(400, '{"error":"Ticket expired","code":30}'))),
+        $loggerZapis
+    );
+    $uslugaZapis->chargeByCode('TOKEN', '777123');
+} catch (BlikException $e) {
+}
+wynik('zwykle odrzucenie kodu nie podpowiada BLIK Level 0', 0, count(array_filter($linieLogu, static fn (string $l): bool => str_contains($l, 'BLIK Level 0'))));
 
 echo PHP_EOL . str_repeat('-', 60) . PHP_EOL;
 echo 'Zdane: ' . $zdane . ', niezdane: ' . $bledy . PHP_EOL;
