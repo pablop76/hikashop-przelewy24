@@ -115,6 +115,19 @@ $params = $this->element->payment_params ?? new stdClass();
 </tr>
 <tr>
 	<td class="key">
+		<label for="data[payment][payment_params][blik_in_shop]">
+			<?php echo Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_BLIK_IN_SHOP'); ?>
+		</label>
+	</td>
+	<td>
+		<?php echo HTMLHelper::_('hikaselect.booleanlist', 'data[payment][payment_params][blik_in_shop]', '', $params->blik_in_shop ?? 0); ?>
+		<p class="hikashop_help">
+			<?php echo Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_BLIK_IN_SHOP_HELP'); ?>
+		</p>
+	</td>
+</tr>
+<tr>
+	<td class="key">
 		<label for="data[payment][payment_params][pending_status]">
 			<?php echo Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_PENDING_STATUS'); ?>
 		</label>

@@ -23,7 +23,7 @@ Wtyczka powstaje etapami. Rdzeń integracji jest gotowy i pokryty testami.
 | Formularz konfiguracji, tłumaczenia pl i en, paczka instalacyjna | gotowe |
 | Zwroty pełne i częściowe | gotowe, patrz uwaga niżej |
 | Pełny przebieg zapłaty w sandboksie | wymaga adresu osiągalnego z internetu |
-| BLIK z kodem w sklepie | planowane |
+| BLIK z kodem w sklepie | gotowe |
 | Karta w sklepie, Apple Pay, Google Pay | planowane |
 | Raty | planowane |
 
@@ -50,6 +50,34 @@ $plugin->onOrderPaymentRefund($order, 19.99);   // pusta kwota oznacza całość
 Zwrot wymaga, żeby przy zamówieniu zapisany był identyfikator transakcji
 nadany przez P24. Trafia tam z powiadomienia, więc zwrócić można wyłącznie
 płatność, która została wcześniej potwierdzona.
+
+### BLIK w kasie
+
+Domyślnie wyłączony, bo wymaga osobnej zgody Przelewów24 na koncie sprzedawcy.
+Po włączeniu w kasie pojawia się pole na sześciocyfrowy kod. Klient wpisuje
+kod z aplikacji banku, zostaje w sklepie i potwierdza płatność w aplikacji.
+
+Pozostawienie pola pustego kieruje klienta zwykłą drogą na stronę płatności
+P24, więc włączenie BLIK-a niczego nie zabiera.
+
+Trzy rzeczy rozstrzygnięte świadomie:
+
+**Kod nie trafia do bazy.** Jest jednorazowy i ważny około dwóch minut, więc
+żyje tylko w stanie sesji i jest z niej usuwany w chwili użycia. Inaczej
+groziłby wysłaniem przy następnym zamówieniu, gdy jest już nieważny.
+
+**Zużytego kodu nie wysyłamy drugi raz.** Gdy P24 odpowie kodem 35, czyli
+„kod już użyty", obciążenie mogło dojść do skutku, a tylko odpowiedź do nas
+nie dotarła. Zamówienie zostaje wtedy w stanie oczekiwania na powiadomienie,
+zamiast próbować ponownie.
+
+**Nie każde odrzucenie pozwala spróbować jeszcze raz.** Przy przeterminowanym
+albo błędnym kodzie prosimy o nowy. Przy braku środków czy odmowie banku nowy
+kod niczego nie zmieni, więc od razu kierujemy klienta do innej metody.
+
+Strona oczekiwania na potwierdzenie **nie odpytuje P24 i nie odświeża się**.
+Zapłatę potwierdza powiadomienie wysłane przez P24 na serwer, a nie cokolwiek,
+co dzieje się w przeglądarce klienta.
 
 ## Instalacja
 
@@ -140,6 +168,7 @@ tests/
   joomla.php                     wtyczka w zainstalowanej Joomli
   notification.php               ścieżka powiadomienia
   refund.php                     zwroty
+  blik.php                       BLIK w kasie
   bootstrap-joomla.php           wspólny rozruch testów integracyjnych
 ```
 
@@ -172,7 +201,7 @@ ani od Joomli poza klientem HTTP.
 
 ## Testy
 
-Pięć zestawów, każdy o innym zasięgu.
+Sześć zestawów, każdy o innym zasięgu.
 
 ```bash
 php tests/run.php          # biblioteka, bez Joomli i bez sieci
@@ -180,6 +209,7 @@ php tests/sandbox.php      # prawdziwe API P24, wymaga danych sandboxa
 php tests/joomla.php       # wtyczka w zainstalowanej Joomli z HikaShopem
 php tests/notification.php # sciezka powiadomienia, siec podstawiona atrapa
 php tests/refund.php       # zwroty, siec podstawiona atrapa
+php tests/blik.php         # BLIK w kasie, siec podstawiona atrapa
 ```
 
 `run.php` obejmuje przeliczanie kwot, kolejność kluczy w podpisach, odrzucanie

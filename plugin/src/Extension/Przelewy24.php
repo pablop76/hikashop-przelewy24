@@ -12,8 +12,10 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Amount;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\ApiClient;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\BlikService;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Config;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\ApiException;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\BlikException;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\ConfigurationException;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\SignatureException;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Logger;
@@ -99,11 +101,30 @@ class Przelewy24 extends \hikashopPaymentPlugin
     public $p24_token = '';
 
     /**
+     * Klucz, pod którym trzymamy kod BLIK między kasą a złożeniem zamówienia.
+     */
+    public const BLIK_STATE_KEY = 'com_hikashop.przelewy24.blik_code';
+
+    /**
      * Gotowy adres strony płatności P24, odczytywany przez widok.
      *
      * @var string
      */
     public $p24_paywall_url = '';
+
+    /**
+     * Czy płatność BLIK czeka na potwierdzenie w aplikacji banku.
+     *
+     * @var bool
+     */
+    public $p24_blik_pending = false;
+
+    /**
+     * Komunikat o odrzuconej płatności BLIK.
+     *
+     * @var string
+     */
+    public $p24_blik_error = '';
 
     /**
      * Komunikat dla klienta, gdy rejestracja transakcji się nie powiodła.
@@ -134,6 +155,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
         $element->payment_params->crc_key         = '';
         $element->payment_params->api_key         = '';
         $element->payment_params->debug           = 0;
+        $element->payment_params->blik_in_shop   = 0;
         $element->payment_params->pending_status  = 'created';
         $element->payment_params->verified_status = 'confirmed';
         $element->payment_params->invalid_status  = 'cancelled';
@@ -256,6 +278,15 @@ class Przelewy24 extends \hikashopPaymentPlugin
                 'sessionId' => $sessionId,
                 'kwota_gr'  => $amount,
             ]);
+
+            // Kod BLIK wpisany w kasie skraca drogę: klient zostaje
+            // w sklepie i potwierdza płatność w aplikacji banku.
+            // Pusty kod oznacza zwykłe przejście na stronę płatności.
+            $blikCode = $this->takeBlikCode($config);
+
+            if ($blikCode !== '') {
+                $this->chargeBlik($order, $client, $logger, $config, $blikCode);
+            }
         } catch (ConfigurationException $exception) {
             $logger->error('Nie można rozpocząć płatności', [
                 'order_id' => $order->order_id ?? 0,
@@ -436,6 +467,126 @@ class Przelewy24 extends \hikashopPaymentPlugin
             ]);
 
             return false;
+        }
+    }
+
+    /**
+     * Pole na kod BLIK obok metody płatności w kasie.
+     *
+     * HikaShop wstawia tu dowolny HTML. Metody nie oznaczamy jako
+     * wymagającej danych: pusty kod ma prowadzić na stronę płatności
+     * P24, gdzie klient wybierze cokolwiek innego.
+     */
+    public function needCC(&$method)
+    {
+        $config = Config::fromPaymentParams($this->payment_params ?? ($method->payment_params ?? null));
+
+        if (!$config->blikInShop) {
+            return;
+        }
+
+        $wpisany = (string) Factory::getApplication()->getUserState(self::BLIK_STATE_KEY, '');
+
+        $method->custom_html = '<div class="hikashop_przelewy24_blik">'
+            . '<label for="hikashop_przelewy24_blik_code">'
+            . $this->escape(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_BLIK_CODE')) . '</label> '
+            . '<input type="text" id="hikashop_przelewy24_blik_code" name="hikashop_przelewy24_blik_code"'
+            . ' class="hikashop_przelewy24_blik_code inputbox" inputmode="numeric" autocomplete="off"'
+            . ' pattern="[0-9 -]*" maxlength="8" size="8" value="' . $this->escape($wpisany) . '" />'
+            . '<small class="hikashop_przelewy24_blik_hint">'
+            . $this->escape(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_BLIK_HINT'))
+            . '</small></div>';
+    }
+
+    /**
+     * Odczytuje kod BLIK wpisany w kasie i sprawdza jego kształt.
+     */
+    public function onPaymentSave(&$cart, &$rates, &$payment_id)
+    {
+        $metoda = parent::onPaymentSave($cart, $rates, $payment_id);
+
+        $app  = Factory::getApplication();
+        $code = BlikService::normaliseCode((string) $app->input->getString('hikashop_przelewy24_blik_code', ''));
+
+        // Kod trzymamy w stanie sesji, nie w bazie: jest jednorazowy
+        // i ważny około dwóch minut, więc nie ma czego przechowywać.
+        $app->setUserState(self::BLIK_STATE_KEY, $code);
+
+        if ($code === '' || !\is_object($metoda) || ($metoda->payment_type ?? '') !== $this->name) {
+            return $metoda;
+        }
+
+        if (!BlikService::isValidCode($code)) {
+            $app->enqueueMessage(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_BLIK_CODE_INVALID'), 'error');
+
+            return false;
+        }
+
+        return $metoda;
+    }
+
+    /**
+     * Pobiera kod BLIK ze stanu sesji i od razu go stamtąd usuwa.
+     *
+     * Kod jest jednorazowy. Zostawienie go w sesji groziłoby użyciem
+     * przy następnym zamówieniu, gdy jest już dawno nieważny.
+     */
+    protected function takeBlikCode(Config $config)
+    {
+        $app = Factory::getApplication();
+
+        if (!$config->blikInShop) {
+            return '';
+        }
+
+        $code = (string) $app->getUserState(self::BLIK_STATE_KEY, '');
+        $app->setUserState(self::BLIK_STATE_KEY, '');
+
+        return BlikService::normaliseCode($code);
+    }
+
+    /**
+     * Obciąża zamówienie kodem BLIK.
+     *
+     * Nie rzuca dalej: nieudany BLIK nie może przerwać składania
+     * zamówienia. Klient dostaje komunikat i zostaje mu zwykła droga
+     * przez stronę płatności P24.
+     */
+    protected function chargeBlik($order, ApiClient $client, Logger $logger, Config $config, $blikCode)
+    {
+        try {
+            $p24OrderId = (new BlikService($client, $logger))->chargeByCode($this->p24_token, $blikCode);
+
+            $this->p24_blik_pending = true;
+
+            OrderPaymentData::store((int) $order->order_id, [
+                OrderPaymentData::P24_ORDER_ID => $p24OrderId,
+            ]);
+
+            $logger->info('BLIK czeka na potwierdzenie w aplikacji banku', [
+                'order_id'  => $order->order_id,
+                'p24_order' => $p24OrderId,
+            ]);
+        } catch (BlikException $exception) {
+            $logger->error('Płatność BLIK odrzucona', [
+                'order_id' => $order->order_id ?? 0,
+                'powod'    => $exception->getReason()->value,
+            ]);
+
+            // Zużytego kodu nie wolno wysłać drugi raz: obciążenie mogło
+            // dojść do skutku, a tylko odpowiedź do nas nie dotarła.
+            $this->p24_blik_pending = $exception->isCodeConsumed();
+
+            if (!$this->p24_blik_pending) {
+                $this->p24_blik_error = Text::_($exception->getReason()->languageKey());
+            }
+        } catch (ApiException $exception) {
+            $logger->error('Nie udało się obciążyć kodem BLIK', [
+                'order_id' => $order->order_id ?? 0,
+                'http'     => $exception->getHttpStatus(),
+            ]);
+
+            $this->p24_blik_error = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_BLIK_ERROR_GENERAL_ERROR');
         }
     }
 

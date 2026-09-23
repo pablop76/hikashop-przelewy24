@@ -26,6 +26,7 @@ final class Config
         public readonly string $apiKey,
         public readonly Environment $environment,
         public readonly bool $debug,
+        public readonly bool $blikInShop,
         public readonly string $verifiedStatus,
         public readonly string $invalidStatus,
         public readonly string $pendingStatus
@@ -51,6 +52,9 @@ final class Config
             apiKey: trim((string) self::read($params, 'api_key', '')),
             environment: Environment::fromConfigValue(self::read($params, 'test_mode', '1')),
             debug: (string) self::read($params, 'debug', '0') === '1',
+            // Kod BLIK w kasie wymaga osobnej zgody P24 na koncie sprzedawcy,
+            // wiec domyslnie wylaczony.
+            blikInShop: (string) self::read($params, 'blik_in_shop', '0') === '1',
             verifiedStatus: (string) self::read($params, 'verified_status', 'confirmed'),
             invalidStatus: (string) self::read($params, 'invalid_status', 'cancelled'),
             pendingStatus: (string) self::read($params, 'pending_status', 'created')

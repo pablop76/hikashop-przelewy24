@@ -180,6 +180,7 @@ $zleDane = new Config(
     apiKey: 'zupelnie-bledny-klucz-api-0000000',
     environment: $config->environment,
     debug: false,
+    blikInShop: false,
     verifiedStatus: 'confirmed',
     invalidStatus: 'cancelled',
     pendingStatus: 'created'

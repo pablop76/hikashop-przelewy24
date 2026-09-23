@@ -25,11 +25,26 @@ defined('_JEXEC') or die('Restricted access');
 $paywallUrl = (string) $this->p24_paywall_url;
 $errorText  = (string) $this->p24_error;
 $retryUrl   = (string) $this->p24_retry_url;
+$blikPending = (bool) $this->p24_blik_pending;
+$blikError   = (string) $this->p24_blik_error;
 
 $escape = static fn ($value): string => htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 ?>
 <div class="hikashop_przelewy24_end">
-<?php if ($errorText !== '') : ?>
+<?php if ($blikPending) : ?>
+    <div class="hikashop_przelewy24_blik_waiting">
+        <h2><?php echo $escape(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_BLIK_WAITING')); ?></h2>
+        <p><?php echo $escape(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_BLIK_WAITING_INFO')); ?></p>
+        <p class="hikashop_przelewy24_note">
+            <?php echo $escape(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_BLIK_WAITING_AFTER')); ?>
+        </p>
+    </div>
+    <?php
+    // Świadomie bez samoczynnego odświeżania i bez odpytywania P24.
+    // Zapłatę potwierdza powiadomienie wysłane przez P24 na serwer,
+    // a nie cokolwiek, co dzieje się w przeglądarce klienta.
+    ?>
+<?php elseif ($errorText !== '') : ?>
     <div class="hikashop_przelewy24_error">
         <h2><?php echo $escape(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_PAYMENT_NOT_STARTED')); ?></h2>
         <p><?php echo $escape($errorText); ?></p>
@@ -46,6 +61,12 @@ $escape = static fn ($value): string => htmlspecialchars((string) $value, ENT_QU
     </div>
 <?php else : ?>
     <div class="hikashop_przelewy24_redirect">
+    <?php if ($blikError !== '') : ?>
+        <div class="hikashop_przelewy24_blik_error">
+            <p><strong><?php echo $escape($blikError); ?></strong></p>
+            <p><?php echo $escape(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_BLIK_OR_PAYWALL')); ?></p>
+        </div>
+    <?php endif; ?>
         <h2><?php echo $escape(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_GOING_TO_GATEWAY')); ?></h2>
         <p><?php echo $escape(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_GOING_TO_GATEWAY_INFO')); ?></p>
         <p>
@@ -66,6 +87,10 @@ $escape = static fn ($value): string => htmlspecialchars((string) $value, ENT_QU
         'use strict';
 
         var adres = <?php echo json_encode($paywallUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+
+        // Po odrzuconej płatności BLIK nie przekierowujemy samoczynnie:
+        // klient musi zdążyć przeczytać, czemu nie wyszło.
+        var samoczynnie = <?php echo $blikError === '' ? 'true' : 'false'; ?>;
 
         if (!adres) {
             return;
@@ -95,7 +120,9 @@ $escape = static fn ($value): string => htmlspecialchars((string) $value, ENT_QU
                 return;
             }
 
-            window.setTimeout(przejdzDoBramki, 400);
+            if (samoczynnie) {
+                window.setTimeout(przejdzDoBramki, 400);
+            }
         });
 
         var przycisk = document.getElementById('hikashopPrzelewy24Button');
