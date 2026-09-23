@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <updates>
 	<update>
-		<name>PLG_HIKASHOPPAYMENT_PRZELEWY24</name>
+		<name>HikaShop Payment - Przelewy24</name>
 		<description>Płatności Przelewy24 dla HikaShopa</description>
 		<element>przelewy24</element>
 		<type>plugin</type>

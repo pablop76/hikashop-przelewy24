@@ -326,6 +326,38 @@ sprawdz('odczyt liczby z pola po serialize', 777, OrderPaymentData::getInt($zamo
 sprawdz('brak pola daje wartosc domyslna', '', OrderPaymentData::getString(null, OrderPaymentData::SESSION_ID));
 sprawdz('uszkodzone pole nie wysypuje odczytu', '', OrderPaymentData::getString((object) ['order_payment_params' => 'sieczka'], OrderPaymentData::SESSION_ID));
 
+sekcja('Manifest: nazwa musi byc doslowna, nie kluczem jezykowym');
+// HikaShop w czesci widokow wypisuje kolumne name wprost z bazy, bez
+// JText::_(), wiec klucz jezykowy pokazywalby sie w panelu dokladnie
+// tak, jak go zapisano. Wszystkie wtyczki platnosci HikaShopa trzymaja
+// tu nazwe doslowna.
+$manifest = simplexml_load_file(__DIR__ . '/../src/przelewy24.xml');
+sprawdz('manifest jest poprawnym XML-em', true, $manifest !== false);
+
+if ($manifest !== false) {
+    $nazwa = trim((string) $manifest->name);
+    sprawdz('nazwa nie jest kluczem jezykowym', false, str_starts_with($nazwa, 'PLG_'));
+    sprawdz('nazwa jest niepusta', true, $nazwa !== '');
+    sprawdz('grupa wtyczki to hikashoppayment', 'hikashoppayment', (string) $manifest['group']);
+    sprawdz('glowny plik wskazany atrybutem plugin', 'przelewy24', (string) $manifest->files->filename[0]['plugin']);
+
+    $wersjaManifest = trim((string) $manifest->version);
+    $aktualizacje   = simplexml_load_file(__DIR__ . '/../przelewy24_update.xml');
+
+    if ($aktualizacje !== false) {
+        sprawdz(
+            'wersja w serwerze aktualizacji zgadza sie z manifestem',
+            $wersjaManifest,
+            trim((string) $aktualizacje->update->version)
+        );
+        sprawdz(
+            'nazwa w serwerze aktualizacji zgadza sie z manifestem',
+            $nazwa,
+            trim((string) $aktualizacje->update->name)
+        );
+    }
+}
+
 echo PHP_EOL . str_repeat('-', 60) . PHP_EOL;
 echo 'Zdane: ' . $passed . ', niezdane: ' . $failed . PHP_EOL;
 

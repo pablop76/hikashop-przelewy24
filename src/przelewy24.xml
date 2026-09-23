@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <extension type="plugin" version="5.0" method="upgrade" group="hikashoppayment">
-	<name>PLG_HIKASHOPPAYMENT_PRZELEWY24</name>
+	<!--
+		Nazwa dosłowna, nie klucz językowy. HikaShop w części widoków
+		wypisuje kolumnę name wprost z bazy, bez JText::_(), więc klucz
+		pokazywałby się w panelu jako PLG_HIKASHOPPAYMENT_PRZELEWY24.
+		Wszystkie wtyczki płatności HikaShopa robią to tak samo.
+	-->
+	<name>HikaShop Payment - Przelewy24</name>
 	<creationDate>2026-09-23</creationDate>
 	<version>1.0.0</version>
 	<author>Paweł Półtoraczyk</author>
