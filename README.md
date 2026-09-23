@@ -43,8 +43,13 @@ Dlatego zwrot podpinamy pod własne zdarzenie HikaShopa: **zmianę statusu
 zamówienia**. W konfiguracji metody płatności wskazujesz status, na przykład
 „zwrócone", i od tej chwili nadanie go zamówieniu zgłasza zwrot do Przelewów24.
 
-**Domyślnie wyłączone.** Puste pole oznacza, że zwroty nie uruchamiają się
-same. Automat oddający pieniądze musi zostać włączony świadomie.
+**Domyślnie wyłączone.** Pozycja „— bez automatycznych zwrotów —” na liście
+statusów oznacza, że zwroty nie uruchamiają się same. Automat oddający
+pieniądze musi zostać włączony świadomie.
+
+Ta pozycja jest dołożona przez wtyczkę, bo lista statusów HikaShopa nie ma
+pustej opcji. Bez niej przeglądarka zaznaczała pierwszy status z listy
+i zwykły zapis konfiguracji po cichu włączał zwroty (błąd w 1.0.0 i 1.0.1).
 
 Sprzedawca dowiaduje się o tym w trzech miejscach: w opisie pola, ostrzeżeniem
 przy każdym otwarciu konfiguracji z włączonym wyzwalaczem oraz komunikatem po
@@ -69,7 +74,23 @@ $plugin->onOrderPaymentRefund($order, 19.99);   // pusta kwota oznacza całość
 
 Domyślnie wyłączony, bo wymaga osobnej zgody Przelewów24 na koncie sprzedawcy.
 Po włączeniu w kasie pojawia się pole na sześciocyfrowy kod. Klient wpisuje
-kod z aplikacji banku, zostaje w sklepie i potwierdza płatność w aplikacji.
+kod z aplikacji banku, klika „Zamawiam i płacę”, zostaje w sklepie
+i potwierdza płatność w aplikacji.
+
+**Usługę trzeba mieć włączoną w P24.** To BLIK Level 0, czyli wywołanie
+`api/v1/paymentMethod/blik/chargeByCode`, osobne od BLIK-a na stronie płatności.
+Bez niej rejestracja transakcji przechodzi, a samo obciążenie kodem kończy się
+`401 Incorrect authentication`, mimo poprawnych kluczy. Klient widzi wtedy
+komunikat o nieudanym BLIK-u i przycisk przejścia na stronę P24, więc
+zamówienie nie przepada. W dzienniku płatności wygląda to tak:
+
+```
+P24 odrzuciło żądanie | endpoint=api/v1/paymentMethod/blik/chargeByCode opis=HTTP 401, kod 401, Incorrect authentication
+```
+
+Pole nie ma przycisku „Wyślij”, który HikaShop domyślnie dokłada pod własnymi
+polami metody płatności. Ten przycisk tylko zapisywał blok płatności, więc
+klient wpisywał kod, klikał go i czekał na zapłatę, której nie było.
 
 Pozostawienie pola pustego kieruje klienta zwykłą drogą na stronę płatności
 P24, więc włączenie BLIK-a niczego nie zabiera.
