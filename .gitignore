@@ -1,0 +1,32 @@
+# Ślady narzędzi
+.claude/
+CLAUDE.md
+.cursor/
+.aider*
+
+# Paczki wydań
+build/
+dist/
+*.zip
+
+# Dane lokalne i konfiguracja z sekretami
+*.local.php
+.env
+.env.*
+config.local.*
+
+# Logi
+*.log
+logs/
+
+# Zależności
+vendor/
+node_modules/
+
+# Edytory i systemy plików
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+desktop.ini
+.DS_Store
