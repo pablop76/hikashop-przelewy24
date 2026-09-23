@@ -21,7 +21,7 @@ Wtyczka powstaje etapami. Rdzeń integracji jest gotowy i pokryty testami.
 | Weryfikacja powiadomień | gotowe |
 | Przekierowanie na stronę płatności P24 | gotowe |
 | Formularz konfiguracji, tłumaczenia pl i en, paczka instalacyjna | gotowe |
-| Zwroty pełne i częściowe | gotowe, patrz uwaga niżej |
+| Zwroty pełne i częściowe | gotowe, z wyzwalaczem przez status zamówienia |
 | Pełny przebieg zapłaty w sandboksie | wymaga adresu osiągalnego z internetu |
 | BLIK z kodem w sklepie | gotowe |
 | Karta w sklepie, Apple Pay, Google Pay | przepływ ustalony, do zbudowania |
@@ -39,17 +39,31 @@ inna wtyczka, która ją implementuje, `ogone`, też nie ma kto wywołać.
 Dla porównania `onOrderPaymentCapture()` jest wywoływane normalnie,
 z `classes/order.php`.
 
-Zwrot da się więc na razie uruchomić tylko z własnego kodu:
+Dlatego zwrot podpinamy pod własne zdarzenie HikaShopa: **zmianę statusu
+zamówienia**. W konfiguracji metody płatności wskazujesz status, na przykład
+„zwrócone", i od tej chwili nadanie go zamówieniu zgłasza zwrot do Przelewów24.
+
+**Domyślnie wyłączone.** Puste pole oznacza, że zwroty nie uruchamiają się
+same. Automat oddający pieniądze musi zostać włączony świadomie.
+
+Sprzedawca dowiaduje się o tym w trzech miejscach: w opisie pola, ostrzeżeniem
+przy każdym otwarciu konfiguracji z włączonym wyzwalaczem oraz komunikatem po
+samym zgłoszeniu zwrotu, z kwotą i numerem zamówienia.
+
+Zabezpieczenia:
+
+- zwrot zgłaszany **raz na zamówienie**, po identyfikatorze zgłoszenia
+- tylko dla płatności **wcześniej potwierdzonej** przez `transaction/verify`
+- tylko dla zamówień opłaconych tą metodą płatności
+- blokada pętli: zapis danych zwrotu sam wywołuje zdarzenie zmiany zamówienia
+
+Zwrot częściowy zostaje do wywołania z kodu:
 
 ```php
 $plugin = hikashop_import('hikashoppayment', 'przelewy24');
 $order  = hikashop_get('class.order')->get($orderId);
 $plugin->onOrderPaymentRefund($order, 19.99);   // pusta kwota oznacza całość
 ```
-
-Zwrot wymaga, żeby przy zamówieniu zapisany był identyfikator transakcji
-nadany przez P24. Trafia tam z powiadomienia, więc zwrócić można wyłącznie
-płatność, która została wcześniej potwierdzona.
 
 ### BLIK w kasie
 

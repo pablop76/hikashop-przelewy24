@@ -183,7 +183,8 @@ $zleDane = new Config(
     blikInShop: false,
     paymentMethodId: 0,
     verifiedStatus: 'confirmed',
-    invalidStatus: 'cancelled'
+    invalidStatus: 'cancelled',
+    refundStatus: ''
 );
 $zlaUsluga = new TransactionService(
     new ApiClient($zleDane, $logger, '1.0.0', 'https://haskap.test', $http),

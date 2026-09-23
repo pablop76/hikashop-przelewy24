@@ -164,3 +164,18 @@ $params = $this->element->payment_params ?? new stdClass();
 		<?php echo $this->data['order_statuses']->display('data[payment][payment_params][invalid_status]', $params->invalid_status ?? 'cancelled'); ?>
 	</td>
 </tr>
+<tr>
+	<td class="key">
+		<label for="data[payment][payment_params][refund_status]">
+			<?php echo Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_REFUND_STATUS'); ?>
+		</label>
+	</td>
+	<td>
+		<?php echo $this->data['order_statuses']->display('data[payment][payment_params][refund_status]', $params->refund_status ?? ''); ?>
+		<p class="hikashop_help">
+			<strong><?php echo Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_REFUND_STATUS_WARNING'); ?></strong>
+			<br />
+			<?php echo Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_REFUND_STATUS_HELP'); ?>
+		</p>
+	</td>
+</tr>

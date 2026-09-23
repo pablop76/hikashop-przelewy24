@@ -18,6 +18,7 @@ use Joomla\Http\TransportInterface;
 use Joomla\Uri\UriInterface;
 use Laminas\Diactoros\Stream;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\ApiClient;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Config;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\ApiException;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Logger;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\RefundService;
@@ -181,6 +182,96 @@ wynik('metoda onOrderPaymentRefund istnieje', true, method_exists($wtyczka, 'onO
 
 $puste = new stdClass();
 wynik('zwrot bez zamowienia zwraca false', false, $wtyczka->onOrderPaymentRefund($puste, 10.0));
+
+echo PHP_EOL . '6. Wyzwalacz zwrotu przez zmiane statusu' . PHP_EOL;
+
+wynik('metoda onAfterOrderUpdate() istnieje', true, method_exists($wtyczka, 'onAfterOrderUpdate'));
+wynik('domyslnie wyzwalacz jest wylaczony', '', Config::fromPaymentParams(null)->refundStatus);
+wynik('pusty status czyta sie jako wylaczony', '', Config::fromPaymentParams((object) ['refund_status' => '   '])->refundStatus);
+wynik('wskazany status jest odczytany', 'refunded', Config::fromPaymentParams((object) ['refund_status' => 'refunded'])->refundStatus);
+
+// Zamowienie testowe: oplacone, metoda przelewy24, bez zgloszonego zwrotu.
+$prefix = przedrostekTabel();
+$pdo    = polaczenieZBaza();
+
+$orderToken = bin2hex(random_bytes(16));
+$pdo->prepare("
+    INSERT INTO {$prefix}hikashop_order
+        (order_number, order_created, order_modified, order_status, order_type,
+         order_full_price, order_currency_id, order_payment_id, order_payment_method,
+         order_token, order_payment_params)
+    VALUES
+        (:numer, :teraz, :teraz, :status, 'sale', 12.00, 125, :platnosc, 'przelewy24', :token, :parametry)
+")->execute([
+    ':numer'     => 'P24REF' . random_int(1000, 9999),
+    ':teraz'     => time(),
+    ':status'    => $config->verifiedStatus,
+    ':platnosc'  => $metoda['id'],
+    ':token'     => $orderToken,
+    ':parametry' => serialize((object) [
+        'p24_session_id' => 'hika_test_' . bin2hex(random_bytes(8)),
+        'p24_order_id'   => 0,
+        'p24_amount'     => 1200,
+        'p24_currency'   => 'PLN',
+    ]),
+]);
+
+$orderId = (int) $pdo->lastInsertId();
+
+register_shutdown_function(static function () use ($pdo, $prefix, $orderId): void {
+    $pdo->prepare("DELETE FROM {$prefix}hikashop_order WHERE order_id = :id")->execute([':id' => $orderId]);
+    $pdo->prepare("DELETE FROM {$prefix}hikashop_history WHERE history_order_id = :id")->execute([':id' => $orderId]);
+});
+
+echo '       zamowienie testowe: ' . $orderId . PHP_EOL;
+
+/**
+ * Wola wyzwalacz i mowi, czy doszlo do zgloszenia zwrotu.
+ */
+function czyZgloszonoZwrot($wtyczka, int $orderId, string $status): bool
+{
+    $zdarzenie = (object) ['order_id' => $orderId, 'order_status' => $status];
+    $mail      = false;
+
+    $wtyczka->onAfterOrderUpdate($zdarzenie, $mail);
+
+    $prefix = przedrostekTabel();
+    $q      = polaczenieZBaza()->prepare("SELECT order_payment_params FROM {$prefix}hikashop_order WHERE order_id = :id");
+    $q->execute([':id' => $orderId]);
+
+    $par = (object) (array) @unserialize((string) $q->fetchColumn());
+
+    return ($par->p24_refund_request_id ?? '') !== '';
+}
+
+// Wyzwalacz wylaczony: zmiana statusu nie moze niczego zwrocic.
+wynik('przy wylaczonym wyzwalaczu zmiana statusu nic nie robi', false, czyZgloszonoZwrot($wtyczka, $orderId, 'refunded'));
+
+// Wyzwalacz wlaczony, ale status inny niz ustawiony.
+//
+// UWAGA: zmieniamy tu prawdziwa konfiguracje metody platnosci w sklepie.
+// Pierwotny stan zapamietujemy i przywracamy przy wyjsciu, TAKZE przy
+// bledzie. Pozostawienie wlaczonego wyzwalacza oznaczaloby sklep, ktory
+// oddaje klientom pieniadze przy zmianie statusu zamowienia.
+$parametryPrzed = (string) $pdo->query(
+    "SELECT payment_params FROM {$prefix}hikashop_payment WHERE payment_id = {$metoda['id']}"
+)->fetchColumn();
+
+register_shutdown_function(static function () use ($pdo, $prefix, $metoda, $parametryPrzed): void {
+    $pdo->prepare("UPDATE {$prefix}hikashop_payment SET payment_params = :p WHERE payment_id = :id")
+        ->execute([':p' => $parametryPrzed, ':id' => $metoda['id']]);
+});
+
+$zmienione = (array) (object) (array) @unserialize($parametryPrzed);
+$zmienione['refund_status'] = 'refunded';
+
+$pdo->prepare("UPDATE {$prefix}hikashop_payment SET payment_params = :p WHERE payment_id = :id")
+    ->execute([':p' => serialize((object) $zmienione), ':id' => $metoda['id']]);
+
+wynik('inny status nie uruchamia zwrotu', false, czyZgloszonoZwrot($wtyczka, $orderId, 'shipped'));
+
+// Zamowienie bez potwierdzonej transakcji P24: zwrot nie ma czego zwrocic.
+wynik('brak transakcji P24 blokuje zwrot', false, czyZgloszonoZwrot($wtyczka, $orderId, 'refunded'));
 
 echo PHP_EOL . str_repeat('-', 60) . PHP_EOL;
 echo 'Zdane: ' . $zdane . ', niezdane: ' . $bledy . PHP_EOL;

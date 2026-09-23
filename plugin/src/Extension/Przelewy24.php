@@ -66,7 +66,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
     /**
      * Wersja wtyczki, wysyłana do P24 w nagłówku diagnostycznym.
      */
-    public const VERSION = '1.0.0';
+    public const VERSION = '1.0.1';
 
     protected $autoloadLanguage = true;
 
@@ -159,6 +159,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
         $element->payment_params->payment_method_id = 0;
         $element->payment_params->verified_status = 'confirmed';
         $element->payment_params->invalid_status  = 'cancelled';
+        $element->payment_params->refund_status   = '';
     }
 
     /**
@@ -188,6 +189,16 @@ class Przelewy24 extends \hikashopPaymentPlugin
         // Brak wpisu IP w panelu P24 daje dokładnie ten sam błąd 401, co
         // zły klucz, więc bez tej podpowiedzi diagnoza bywa długa.
         $app->enqueueMessage(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_IP_REMINDER'), 'notice');
+
+        // Włączony wyzwalacz zwrotu oddaje klientom prawdziwe pieniądze
+        // przy zwykłej zmianie statusu zamówienia. Sprzedawca musi o tym
+        // wiedzieć za każdym razem, gdy otwiera tę konfigurację.
+        if ($config->refundStatus !== '') {
+            $app->enqueueMessage(
+                Text::sprintf('PLG_HIKASHOPPAYMENT_PRZELEWY24_REFUND_TRIGGER_ACTIVE', $config->refundStatus),
+                'warning'
+            );
+        }
     }
 
     /**
@@ -618,6 +629,107 @@ class Przelewy24 extends \hikashopPaymentPlugin
 
             $this->p24_blik_error = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_BLIK_ERROR_GENERAL_ERROR');
         }
+    }
+
+    /**
+     * Zwraca pieniądze, gdy sprzedawca nada zamówieniu ustalony status.
+     *
+     * HikaShop nie wywołuje onOrderPaymentRefund() z panelu, więc zwrot
+     * podpinamy pod własne zdarzenie HikaShopa: zmianę zamówienia.
+     * Wyzwalacz jest domyślnie wyłączony i wymaga wskazania statusu
+     * w konfiguracji metody płatności.
+     *
+     * @param  object  $order       zmieniane zamówienie
+     * @param  bool    $send_email  czy HikaShop wyśle powiadomienie
+     */
+    public function onAfterOrderUpdate(&$order, &$send_email)
+    {
+        // Zapis danych zwrotu przy zamówieniu sam wywołuje to zdarzenie
+        // ponownie. Bez tej blokady powstałaby pętla, a przy niej kolejne
+        // zgłoszenia zwrotu.
+        static $wTrakcie = [];
+
+        $orderId = (int) ($order->order_id ?? 0);
+
+        if ($orderId <= 0 || isset($wTrakcie[$orderId])) {
+            return;
+        }
+
+        $nowyStatus = (string) ($order->order_status ?? '');
+
+        if ($nowyStatus === '') {
+            return;
+        }
+
+        // Zdarzenie dostajemy dla KAŻDEGO zamówienia w sklepie, także
+        // opłaconego inną metodą. Pełne dane bierzemy z bazy, bo obiekt
+        // zdarzenia zawiera zwykle tylko zmienione pola.
+        $dbOrder = $this->getOrder($orderId);
+
+        if (empty($dbOrder) || ($dbOrder->order_payment_method ?? '') !== $this->name) {
+            return;
+        }
+
+        if (!$this->loadPaymentParams($dbOrder)) {
+            return;
+        }
+
+        $config = Config::fromPaymentParams($this->payment_params);
+
+        if ($config->refundStatus === '' || $nowyStatus !== $config->refundStatus) {
+            return;
+        }
+
+        // Zwrot zgłaszamy raz. Powtórzenie oddałoby pieniądze drugi raz.
+        if (OrderPaymentData::getString($dbOrder, OrderPaymentData::REFUND_REQUEST_ID) !== '') {
+            return;
+        }
+
+        $wTrakcie[$orderId] = true;
+
+        try {
+            $zgloszony = $this->onOrderPaymentRefund($dbOrder, null);
+
+            $this->informAboutRefund($orderId, $dbOrder, $zgloszony);
+        } finally {
+            unset($wTrakcie[$orderId]);
+        }
+    }
+
+    /**
+     * Mówi sprzedawcy wprost, co się właśnie stało z pieniędzmi.
+     */
+    protected function informAboutRefund($orderId, $order, $zgloszony)
+    {
+        $app = Factory::getApplication();
+
+        if (!$app->isClient('administrator')) {
+            return;
+        }
+
+        if (!$zgloszony) {
+            $app->enqueueMessage(
+                Text::sprintf('PLG_HIKASHOPPAYMENT_PRZELEWY24_REFUND_FAILED_NOTICE', $order->order_number ?? $orderId),
+                'error'
+            );
+
+            return;
+        }
+
+        $kwota = Amount::fromMinorUnit(
+            OrderPaymentData::getInt($order, OrderPaymentData::REFUND_AMOUNT),
+            $this->currencyFractionDigits()
+        );
+
+        $app->enqueueMessage(
+            Text::sprintf(
+                'PLG_HIKASHOPPAYMENT_PRZELEWY24_REFUND_SENT_NOTICE',
+                number_format($kwota, 2, ',', ' '),
+                $this->currencyCode(),
+                $order->order_number ?? $orderId
+            ),
+            'warning'
+        );
     }
 
     /**
