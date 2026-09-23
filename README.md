@@ -19,11 +19,25 @@ Wtyczka powstaje etapami. Rdzeń integracji jest gotowy i pokryty testami.
 | --- | --- |
 | Biblioteka P24 (podpisy, kwoty, klient API, logowanie) | gotowe |
 | Weryfikacja powiadomień | gotowe |
-| Przekierowanie na stronę płatności P24 | w toku |
+| Przekierowanie na stronę płatności P24 | gotowe |
+| Formularz konfiguracji, tłumaczenia pl i en, paczka instalacyjna | gotowe |
+| Pełny przebieg zapłaty w sandboksie | wymaga adresu osiągalnego z internetu |
 | BLIK z kodem w sklepie | planowane |
 | Karta w sklepie, Apple Pay, Google Pay | planowane |
 | Raty | planowane |
 | Zwroty pełne i częściowe | planowane |
+
+## Instalacja
+
+```bash
+php -d extension=zip build.php
+```
+
+Paczka powstaje w `build/`. Instaluje się ją normalnie przez Rozszerzenia →
+Zainstaluj w panelu Joomli. Budowanie wymaga rozszerzenia `zip` w PHP.
+
+Po instalacji metodę płatności dodaje się w HikaShopie: System → Metody
+płatności → Nowa → Przelewy24.
 
 ## Zasady integracji
 
@@ -106,13 +120,36 @@ poza klientem HTTP.
 
 ## Testy
 
+Trzy zestawy, każdy o innym zasięgu.
+
 ```bash
-php tests/run.php
+php tests/run.php       # biblioteka, bez Joomli i bez sieci
+php tests/sandbox.php   # prawdziwe API P24, wymaga danych sandboxa
+php tests/joomla.php    # wtyczka w zainstalowanej Joomli z HikaShopem
 ```
 
-Testy obejmują przeliczanie kwot, kolejność kluczy w podpisach, odrzucanie
+`run.php` obejmuje przeliczanie kwot, kolejność kluczy w podpisach, odrzucanie
 niepoprawnych powiadomień, budowanie żądania rejestracji i odczyt danych
-zapisanych przy zamówieniu. Nie wymagają Joomli, HikaShopa ani composera.
+zapisanych przy zamówieniu. Nie wymaga Joomli, HikaShopa ani composera.
+
+`sandbox.php` odzywa się do sandboksa P24 i sprawdza dane dostępowe,
+rejestrację transakcji, adres strony płatności oraz obsługę błędów. Czyta
+dane z `tests/credentials.local.php`, którego nie ma w repozytorium. Wzór:
+
+```php
+<?php
+
+return [
+    'merchant_id' => 123456,
+    'crc_key'     => '...',
+    'api_key'     => '...',
+    'test_mode'   => '1',
+];
+```
+
+`joomla.php` ładuje wtyczkę tak, jak robi to HikaShop, i sprawdza autoloader,
+dziedziczenie, sygnatury metod oraz tłumaczenia. Wymaga wcześniejszej
+instalacji paczki. Ścieżkę do Joomli można podać zmienną `JOOMLA_PATH`.
 
 Pełną procedurę testów płatności w sandboksie opisuje `playbooks/p24-testing.md`
 w katalogu nadrzędnym.
