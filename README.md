@@ -24,7 +24,7 @@ Wtyczka powstaje etapami. Rdzeń integracji jest gotowy i pokryty testami.
 | Zwroty pełne i częściowe | gotowe, patrz uwaga niżej |
 | Pełny przebieg zapłaty w sandboksie | wymaga adresu osiągalnego z internetu |
 | BLIK z kodem w sklepie | gotowe |
-| Karta w sklepie, Apple Pay, Google Pay | wstrzymane, patrz uwaga niżej |
+| Karta w sklepie, Apple Pay, Google Pay | przepływ ustalony, do zbudowania |
 | Raty | gotowe, przez narzuconą metodę 303 |
 
 ### Uwaga o zwrotach
@@ -90,24 +90,41 @@ płatności tego samego typu** (HikaShop na to pozwala) i wpisz w niej 303.
 Ograniczenia kwotowe ustaw polami najniższej i najwyższej wartości zamówienia,
 które HikaShop ma u siebie — nie dublujemy ich we wtyczce.
 
-### Karta w sklepie: dlaczego wstrzymane
+### Karta w sklepie: przepływ
 
 Karty **już działają** przez stronę płatności P24: klient wybiera je tam obok
-BLIK-a i przelewu. Nic nie trzeba do tego dodawać.
+BLIK-a i przelewu. Poniższe dotyczy wyłącznie formularza osadzonego w sklepie,
+który skraca tę drogę.
 
-Wstrzymany jest wyłącznie formularz karty osadzony w sklepie. Wymaga on skryptu
-P24 (`Przelewy24CardWhileLabelHandler`), którego adresu ani kontraktu
-inicjalizacji nie ma w publicznie dostępnym kodzie, a dokumentacja P24 jest
-renderowana JavaScriptem i nie daje się odczytać automatycznie.
+**Numer karty nigdy nie trafia na serwer sklepu.** Tokenizuje go skrypt P24
+w przeglądarce, a sklep dostaje tylko identyfikator referencyjny. Zakres
+PCI-DSS pozostaje więc mały.
 
-Dobra wiadomość z analizy oficjalnej wtyczki dla WooCommerce: **numer karty
-nigdy nie trafia na serwer sklepu**. Tokenizuje go skrypt P24 w przeglądarce,
-a sklep dostaje tylko identyfikator sesji i podpis
-`sha384({merchantId, sessionId, crc})`. Zakres PCI-DSS pozostaje więc mały,
-wbrew pierwszemu wrażeniu.
+Przepływ według specyfikacji P24, w kolejności:
 
-Do dokończenia potrzebne są dwie rzeczy: opis inicjalizacji formularza
-z dokumentacji P24 oraz włączenie metod „w sklepie" na koncie sprzedawcy.
+1. Przeglądarka ładuje `https://{sandbox|secure}.przelewy24.pl/js/cardTokenizationIframe.min.js`
+2. `new Przelewy24CardTokenization(merchantId, sessionId, sign)`, gdzie
+   `sign` to `sha384({merchantId, sessionId, crc})` — u nas `Signature::forCardForm()`
+3. `P24.render(typ, '#id', opcje)` rysuje formularz w iframe.
+   `P24.clear('card'|'cvv'|'exp'|'cardholder')` czyści wybrane pole
+4. Zdarzenie `success` niesie `refId`, czyli token karty
+5. Serwer wywołuje `transaction/register` z `cardData.means.referenceNumber = refId`
+   oraz `transactionType = standard` i dostaje token transakcyjny
+6. Przeglądarka ładuje `https://{środowisko}.przelewy24.pl/whitelabel/card/javascript/{token}`
+7. Po zdarzeniu `Przelewy24CardWhileLabelHandlerReady` wywołuje
+   `Przelewy24CardWhileLabelHandler.config({...})` i `.main()`, co obsługuje 3D Secure
+8. Dalej jak zwykle: powiadomienie i `transaction/verify`
+
+Dla płatności cyklicznych i one-click krok 5 używa `transactionType = initial`,
+a kolejne obciążenia `1click` albo `recurring`.
+
+**Wymagane metody na koncie sprzedawcy** (bez nich P24 odrzuci rejestrację):
+karty 241 lub 242, Google Pay 264 lub 265, Apple Pay 252 lub 253.
+
+Źródło: `https://developers.przelewy24.pl/extended/pl_x_documentation_1.0.yaml`,
+sekcje „Wprowadzenie", „Inicjalizacja formularza" i „Przebieg transakcji
+kartowych". Strona dokumentacji jest renderowana JavaScriptem, ale sama
+specyfikacja OpenAPI pobiera się zwykłym żądaniem.
 
 ## Instalacja
 
