@@ -11,38 +11,7 @@
  * Skrypt lezy poza katalogiem witryny, wiec nie jest dostepny z przegladarki.
  */
 
-const _JEXEC = 1;
-
-define('JPATH_BASE', getenv('JOOMLA_PATH') ?: 'D:/laragon/www/haskap');
-
-if (!is_file(JPATH_BASE . '/includes/defines.php')) {
-    fwrite(STDERR, 'Nie znaleziono Joomli w ' . JPATH_BASE . PHP_EOL);
-    fwrite(STDERR, 'Ustaw zmienna JOOMLA_PATH na katalog instalacji.' . PHP_EOL);
-    exit(2);
-}
-
-require_once JPATH_BASE . '/includes/defines.php';
-require_once JPATH_BASE . '/includes/framework.php';
-
-$container = Joomla\CMS\Factory::getContainer();
-$container->alias('session', 'session.cli')
-    ->alias('JSession', 'session.cli')
-    ->alias(Joomla\CMS\Session\Session::class, 'session.cli')
-    ->alias(Joomla\Session\Session::class, 'session.cli')
-    ->alias(Joomla\Session\SessionInterface::class, 'session.cli');
-
-$app = $container->get(Joomla\Console\Application::class);
-Joomla\CMS\Factory::$application = $app;
-
-// HikaShop uzywa starych nazw klas (JFactory, JText, JHtml). W zadaniu
-// przegladarkowym rejestruje je wtyczka "Behaviour - Backward Compatibility",
-// ktora w trybie CLI sie nie uruchamia, wiec wczytujemy jej mape aliasow.
-require_once JPATH_PLUGINS . '/behaviour/compat/src/classmap/classmap.php';
-
-// Mape przestrzeni nazw rozszerzen aplikacja konsolowa tworzy dopiero
-// w execute(), ktorego tu nie wolamy. Bez niej HikaShop wywraca sie przy
-// imporcie wtyczek z przestrzeniami nazw, na przyklad inpost_hika.
-$app->createExtensionNamespaceMap();
+require_once __DIR__ . '/bootstrap-joomla.php';
 
 $zdane = 0;
 $bledy = 0;
@@ -63,16 +32,6 @@ function sprawdz(string $opis, bool $ok, string $szczegol = ''): void
 }
 
 echo 'Joomla ' . (new Joomla\CMS\Version())->getShortVersion() . PHP_EOL;
-
-// HikaShop udostepnia swoje funkcje pomocnicze przez ten plik.
-$helper = JPATH_ADMINISTRATOR . '/components/com_hikashop/helpers/helper.php';
-
-if (!is_file($helper)) {
-    fwrite(STDERR, 'Nie znaleziono helpera HikaShopa.' . PHP_EOL);
-    exit(2);
-}
-
-require_once $helper;
 
 sprawdz('funkcje HikaShopa dostepne', function_exists('hikashop_import'));
 
@@ -102,6 +61,8 @@ $klasy = [
     'WebService\Przelewy24\Logger',
     'WebService\Przelewy24\Notification',
     'WebService\Przelewy24\OrderPaymentData',
+    'WebService\Przelewy24\RefundService',
+    'WebService\Przelewy24\RefundStatus',
     'WebService\Przelewy24\RegisterRequest',
     'WebService\Przelewy24\SessionId',
     'WebService\Przelewy24\Signature',

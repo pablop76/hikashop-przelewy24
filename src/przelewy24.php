@@ -18,6 +18,7 @@ use WebService\Przelewy24\Exception\SignatureException;
 use WebService\Przelewy24\Logger;
 use WebService\Przelewy24\Notification;
 use WebService\Przelewy24\OrderPaymentData;
+use WebService\Przelewy24\RefundService;
 use WebService\Przelewy24\RegisterRequest;
 use WebService\Przelewy24\SessionId;
 use WebService\Przelewy24\TransactionService;
@@ -68,7 +69,7 @@ class plgHikashoppaymentPrzelewy24 extends hikashopPaymentPlugin
     public $features = [
         'authorize_capture' => false,
         'recurring'         => false,
-        'refund'            => false,
+        'refund'            => true,
     ];
 
     /**
@@ -417,6 +418,151 @@ class plgHikashoppaymentPrzelewy24 extends hikashopPaymentPlugin
 
             return false;
         }
+    }
+
+    /**
+     * Zwrot pełny lub częściowy.
+     *
+     * Uwaga: HikaShop 5.1.2 nie wywołuje tej metody z żadnego miejsca
+     * w panelu, choć deklaruje ją w klasie bazowej wtyczek płatności.
+     * Implementacja jest zgodna z tym interfejsem, więc zadziała tam,
+     * gdzie HikaShop ją podepnie, i daje się wywołać z własnego kodu.
+     *
+     * @param  object      $order  zamówienie HikaShopa
+     * @param  float|null  $total  kwota zwrotu, pusta oznacza całość
+     *
+     * @return bool  czy P24 przyjęło zgłoszenie zwrotu
+     */
+    public function onOrderPaymentRefund(&$order, $total)
+    {
+        if (empty($order->order_id)) {
+            return false;
+        }
+
+        $orderId = (int) $order->order_id;
+
+        if (!$this->loadPaymentParams($order)) {
+            $this->writeToLog('P24 [BŁĄD] Zwrot: brak parametrów metody płatności | order_id=' . $orderId);
+
+            return false;
+        }
+
+        $config = Config::fromPaymentParams($this->payment_params);
+        $logger = $this->buildLogger($config);
+
+        try {
+            $config->assertComplete();
+
+            $this->loadOrderData($order);
+
+            $sessionId  = OrderPaymentData::getString($order, OrderPaymentData::SESSION_ID);
+            $p24OrderId = OrderPaymentData::getInt($order, OrderPaymentData::P24_ORDER_ID);
+
+            if ($sessionId === '' || $p24OrderId <= 0) {
+                // Bez identyfikatora transakcji nadanego przez P24 nie ma
+                // czego zwracać. Taki stan oznacza, że zapłata nigdy nie
+                // została potwierdzona powiadomieniem.
+                $logger->error('Zwrot niemożliwy, brak potwierdzonej transakcji P24', [
+                    'order_id' => $orderId,
+                ]);
+
+                return false;
+            }
+
+            $fractionDigits = $this->currencyFractionDigits();
+            $paidAmount     = OrderPaymentData::getInt($order, OrderPaymentData::AMOUNT);
+
+            $amount = empty($total)
+                ? $paidAmount
+                : Amount::toMinorUnit($total, $fractionDigits);
+
+            if ($amount <= 0) {
+                $logger->error('Zwrot niemożliwy, kwota jest zerowa', ['order_id' => $orderId]);
+
+                return false;
+            }
+
+            if ($paidAmount > 0 && $amount > $paidAmount) {
+                $logger->error('Zwrot niemożliwy, kwota przekracza zapłaconą', [
+                    'order_id'   => $orderId,
+                    'zwrot_gr'   => $amount,
+                    'zaplata_gr' => $paidAmount,
+                ]);
+
+                return false;
+            }
+
+            $client  = new ApiClient($config, $logger, self::VERSION, HIKASHOP_LIVE);
+            $service = new RefundService($client, $config, $logger);
+
+            $wynik = $service->refund(
+                $sessionId,
+                $p24OrderId,
+                $amount,
+                Text::sprintf('PLG_HIKASHOPPAYMENT_PRZELEWY24_REFUND_DESCRIPTION', $order->order_number ?? $orderId),
+                $this->buildRefundNotifyUrl($order)
+            );
+
+            $status = $wynik['status'];
+
+            OrderPaymentData::store($orderId, [
+                OrderPaymentData::REFUND_REQUEST_ID => $wynik['requestId'],
+                OrderPaymentData::REFUND_AMOUNT     => $amount,
+                OrderPaymentData::REFUND_STATUS     => $status?->value ?? 0,
+            ]);
+
+            if ($status !== null && $status->isRejected()) {
+                $logger->error('P24 odrzuciło zwrot', [
+                    'order_id'  => $orderId,
+                    'requestId' => $wynik['requestId'],
+                ]);
+
+                return false;
+            }
+
+            $logger->info('Zwrot zgłoszony', [
+                'order_id'  => $orderId,
+                'kwota_gr'  => $amount,
+                'stan'      => $status?->name ?? 'nieznany',
+            ]);
+
+            return true;
+        } catch (ConfigurationException $exception) {
+            $logger->error('Zwrot niemożliwy, niekompletna konfiguracja', [
+                'order_id' => $orderId,
+                'powod'    => $exception->getMessage(),
+            ]);
+
+            return false;
+        } catch (ApiException $exception) {
+            $logger->error('Zgłoszenie zwrotu nie powiodło się', [
+                'order_id' => $orderId,
+                'http'     => $exception->getHttpStatus(),
+                'powod'    => $exception->getMessage(),
+            ]);
+
+            return false;
+        } catch (Throwable $exception) {
+            $logger->error('Nieoczekiwany błąd przy zwrocie', [
+                'order_id' => $orderId,
+                'powod'    => $exception->getMessage(),
+            ]);
+
+            return false;
+        }
+    }
+
+    /**
+     * Adres, na który P24 ma przysłać powiadomienie o stanie zwrotu.
+     */
+    protected function buildRefundNotifyUrl($order)
+    {
+        return HIKASHOP_LIVE . 'index.php?option=com_hikashop&ctrl=checkout&task=notify'
+            . '&notif_payment=' . $this->name
+            . '&p24_notify=refund'
+            . '&tmpl=component'
+            . '&order_id=' . (int) $order->order_id
+            . '&order_token=' . md5((string) $order->order_token);
     }
 
     /**

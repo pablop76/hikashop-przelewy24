@@ -21,11 +21,35 @@ Wtyczka powstaje etapami. Rdzeń integracji jest gotowy i pokryty testami.
 | Weryfikacja powiadomień | gotowe |
 | Przekierowanie na stronę płatności P24 | gotowe |
 | Formularz konfiguracji, tłumaczenia pl i en, paczka instalacyjna | gotowe |
+| Zwroty pełne i częściowe | gotowe, patrz uwaga niżej |
 | Pełny przebieg zapłaty w sandboksie | wymaga adresu osiągalnego z internetu |
 | BLIK z kodem w sklepie | planowane |
 | Karta w sklepie, Apple Pay, Google Pay | planowane |
 | Raty | planowane |
-| Zwroty pełne i częściowe | planowane |
+
+### Uwaga o zwrotach
+
+Wtyczka implementuje `onOrderPaymentRefund()` zgodnie z interfejsem wtyczek
+płatności HikaShopa i obsługuje zwroty pełne oraz częściowe.
+
+HikaShop 5.1.2 Business **nie wywołuje tej metody z żadnego miejsca w panelu**.
+Deklaruje ją w klasie bazowej i sprawdza flagę `features['refund']` przy
+filtrowaniu metod płatności, ale samego zwrotu nigdzie nie inicjuje. Jedyna
+inna wtyczka, która ją implementuje, `ogone`, też nie ma kto wywołać.
+Dla porównania `onOrderPaymentCapture()` jest wywoływane normalnie,
+z `classes/order.php`.
+
+Zwrot da się więc na razie uruchomić tylko z własnego kodu:
+
+```php
+$plugin = hikashop_import('hikashoppayment', 'przelewy24');
+$order  = hikashop_get('class.order')->get($orderId);
+$plugin->onOrderPaymentRefund($order, 19.99);   // pusta kwota oznacza całość
+```
+
+Zwrot wymaga, żeby przy zamówieniu zapisany był identyfikator transakcji
+nadany przez P24. Trafia tam z powiadomienia, więc zwrócić można wyłącznie
+płatność, która została wcześniej potwierdzona.
 
 ## Instalacja
 
@@ -107,7 +131,12 @@ src/
   language/                      pl-PL i en-GB
   lib/                           biblioteka P24, PHP 8.1+, przestrzeń nazw
 tests/
-  run.php                        testy jednostkowe biblioteki
+  run.php                        biblioteka, bez Joomli i bez sieci
+  sandbox.php                    prawdziwe API P24
+  joomla.php                     wtyczka w zainstalowanej Joomli
+  notification.php               ścieżka powiadomienia
+  refund.php                     zwroty
+  bootstrap-joomla.php           wspólny rozruch testów integracyjnych
 ```
 
 Nazwy katalogu i klasy są narzucone przez HikaShopa. Funkcja `hikashop_import()`
@@ -120,12 +149,14 @@ poza klientem HTTP.
 
 ## Testy
 
-Trzy zestawy, każdy o innym zasięgu.
+Pięć zestawów, każdy o innym zasięgu.
 
 ```bash
-php tests/run.php       # biblioteka, bez Joomli i bez sieci
-php tests/sandbox.php   # prawdziwe API P24, wymaga danych sandboxa
-php tests/joomla.php    # wtyczka w zainstalowanej Joomli z HikaShopem
+php tests/run.php          # biblioteka, bez Joomli i bez sieci
+php tests/sandbox.php      # prawdziwe API P24, wymaga danych sandboxa
+php tests/joomla.php       # wtyczka w zainstalowanej Joomli z HikaShopem
+php tests/notification.php # sciezka powiadomienia, siec podstawiona atrapa
+php tests/refund.php       # zwroty, siec podstawiona atrapa
 ```
 
 `run.php` obejmuje przeliczanie kwot, kolejność kluczy w podpisach, odrzucanie

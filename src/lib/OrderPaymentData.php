@@ -30,6 +30,10 @@ final class OrderPaymentData
     public const VERIFIED_AT  = 'p24_verified_at';
     public const ATTEMPTS     = 'p24_attempts';
 
+    public const REFUND_REQUEST_ID = 'p24_refund_request_id';
+    public const REFUND_AMOUNT     = 'p24_refund_amount';
+    public const REFUND_STATUS     = 'p24_refund_status';
+
     private function __construct()
     {
     }

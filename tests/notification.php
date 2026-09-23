@@ -14,35 +14,7 @@
  * magazynowych, i jest kasowane na koncu niezaleznie od wyniku.
  */
 
-const _JEXEC = 1;
-
-define('JPATH_BASE', getenv('JOOMLA_PATH') ?: 'D:/laragon/www/haskap');
-
-if (!is_file(JPATH_BASE . '/includes/defines.php')) {
-    fwrite(STDERR, 'Nie znaleziono Joomli w ' . JPATH_BASE . PHP_EOL);
-    exit(2);
-}
-
-require_once JPATH_BASE . '/includes/defines.php';
-require_once JPATH_BASE . '/includes/framework.php';
-
-$container = Joomla\CMS\Factory::getContainer();
-$container->alias('session', 'session.cli')
-    ->alias('JSession', 'session.cli')
-    ->alias(Joomla\CMS\Session\Session::class, 'session.cli')
-    ->alias(Joomla\Session\Session::class, 'session.cli')
-    ->alias(Joomla\Session\SessionInterface::class, 'session.cli');
-
-// Aplikacja witryny, a nie konsolowa: powiadomienie z P24 przychodzi
-// jako zwykle zadanie do witryny, a HikaShop korzysta z setUserState(),
-// ktorego aplikacja konsolowa nie ma.
-$app = $container->get(Joomla\CMS\Application\SiteApplication::class);
-Joomla\CMS\Factory::$application = $app;
-
-require_once JPATH_PLUGINS . '/behaviour/compat/src/classmap/classmap.php';
-$app->createExtensionNamespaceMap();
-
-require_once JPATH_ADMINISTRATOR . '/components/com_hikashop/helpers/helper.php';
+require_once __DIR__ . '/bootstrap-joomla.php';
 
 use Joomla\Http\Http;
 use Joomla\Http\Response;
@@ -136,10 +108,8 @@ final class WtyczkaTestowa extends plgHikashoppaymentPrzelewy24
 
 // --- przygotowanie ---------------------------------------------------
 
-$cfg = new JConfig();
-$pdo = new PDO("mysql:host={$cfg->host};dbname={$cfg->db};charset=utf8mb4", $cfg->user, $cfg->password);
-$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-$prefix = $cfg->dbprefix;
+$pdo    = polaczenieZBaza();
+$prefix = przedrostekTabel();
 
 $q = $pdo->query("SELECT payment_id, payment_params FROM {$prefix}hikashop_payment WHERE payment_type = 'przelewy24' AND payment_published = 1 LIMIT 1");
 $metoda = $q->fetch(PDO::FETCH_ASSOC);
