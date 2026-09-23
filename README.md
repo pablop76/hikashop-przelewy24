@@ -90,6 +90,12 @@ płatności tego samego typu** (HikaShop na to pozwala) i wpisz w niej 303.
 Ograniczenia kwotowe ustaw polami najniższej i najwyższej wartości zamówienia,
 które HikaShop ma u siebie — nie dublujemy ich we wtyczce.
 
+Narzucona metoda musi być **włączona na koncie sprzedawcy**, inaczej P24
+odrzuci rejestrację transakcji. Zbiorcza metoda 303 nie jest dostępna na
+każdym koncie; bywają za to metody ratalne konkretnych banków, na przykład
+129 dla Alior Banku albo 136 dla mBanku. Listę metod włączonych na koncie
+zwraca endpoint `api/v1/payment/methods/{lang}`.
+
 ### Karta w sklepie: przepływ
 
 Karty **już działają** przez stronę płatności P24: klient wybiera je tam obok
