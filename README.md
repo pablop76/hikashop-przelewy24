@@ -123,13 +123,17 @@ jako brak potwierdzenia zapłaty, nie jako awarię.
 ## Struktura
 
 ```text
-src/
-  przelewy24.php                 klasa wtyczki widziana przez HikaShop
+plugin/
+  przelewy24.php                 most zgodności: alias dla HikaShopa
+  przelewy24.xml                 manifest instalacyjny
   przelewy24_configuration.php   formularz konfiguracji w panelu
   przelewy24_end.php             strona przejścia do bramki
-  przelewy24.xml                 manifest instalacyjny
+  script.php                     skrypt instalacyjny, włącza wtyczkę
+  services/provider.php          rejestracja w kontenerze Joomli
+  src/
+    Extension/Przelewy24.php     klasa wtyczki
+    Payment/                     integracja P24, PHP 8.1+
   language/                      pl-PL i en-GB
-  lib/                           biblioteka P24, PHP 8.1+, przestrzeń nazw
 tests/
   run.php                        biblioteka, bez Joomli i bez sieci
   sandbox.php                    prawdziwe API P24
@@ -139,13 +143,32 @@ tests/
   bootstrap-joomla.php           wspólny rozruch testów integracyjnych
 ```
 
-Nazwy katalogu i klasy są narzucone przez HikaShopa. Funkcja `hikashop_import()`
-ładuje wtyczkę przez `require_once` na ścieżce `plugins/hikashoppayment/<nazwa>/<nazwa>.php`
-i tworzy obiekt klasy `plgHikashoppayment<Nazwa>`, z pominięciem kontenera
-Joomli. Z tego powodu wtyczka nie może mieć postaci nowoczesnej wtyczki
-Joomli z `services/provider.php`. Nowoczesny PHP jest natomiast w całości
-biblioteki w `src/lib`, która nie zależy ani od HikaShopa, ani od Joomli
-poza klientem HTTP.
+### Dlaczego most zgodności
+
+Wtyczka jest zbudowana zgodnie z zaleceniami Joomli 5: przestrzeń nazw
+zadeklarowana w manifeście, klasa w `src/Extension`, rejestracja przez
+`services/provider.php`.
+
+HikaShop ładuje jednak wtyczki płatności obok kontenera Joomli. Funkcja
+`hikashop_import()` robi `require_once` na sztywnej ścieżce
+`plugins/hikashoppayment/<nazwa>/<nazwa>.php`, sprawdza `class_exists()`
+dla nazwy `plgHikashoppayment<Nazwa>` i tworzy obiekt tej klasy. Dlatego
+`przelewy24.php` istnieje nadal, ale zawiera już tylko `class_alias()`
+na właściwą klasę. Obie drogi prowadzą do tego samego obiektu.
+
+Klasa z przestrzeni nazw dziedziczy po `hikashopPaymentPlugin`, a tę
+HikaShop rejestruje do autoloadu dopiero przy pierwszym wczytaniu swojego
+`helper.php`. Autoloader Joomli potrafi sięgnąć po naszą klasę wcześniej,
+na przykład podczas instalacji w Menedżerze Rozszerzeń, i wtedy
+`extends` kończy się błędem krytycznym. Stąd guard na początku
+`src/Extension/Przelewy24.php`, który w razie potrzeby doczytuje
+`helper.php` przed deklaracją klasy.
+
+Metody `on*` muszą mieć sygnatury bez typów, zgodne z klasą bazową
+HikaShopa: dodanie typu tam, gdzie przodek go nie ma, łamie
+kontrawariancję i kończy się błędem krytycznym. Cała otypowana logika
+siedzi więc w przestrzeni `Payment`, która nie zależy ani od HikaShopa,
+ani od Joomli poza klientem HTTP.
 
 ## Testy
 

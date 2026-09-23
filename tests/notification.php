@@ -21,13 +21,14 @@ use Joomla\Http\Response;
 use Joomla\Http\TransportInterface;
 use Joomla\Uri\UriInterface;
 use Laminas\Diactoros\Stream;
-use WebService\Przelewy24\ApiClient;
-use WebService\Przelewy24\Config;
-use WebService\Przelewy24\Logger;
-use WebService\Przelewy24\OrderPaymentData;
-use WebService\Przelewy24\SessionId;
-use WebService\Przelewy24\Signature;
-use WebService\Przelewy24\TransactionService;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Extension\Przelewy24;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\ApiClient;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Config;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Logger;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\OrderPaymentData;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\SessionId;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Signature;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\TransactionService;
 
 $zdane = 0;
 $bledy = 0;
@@ -86,7 +87,7 @@ final class TransportAtrapa implements TransportInterface
 /**
  * Wtyczka z podstawiona trescia powiadomienia i podstawionym transportem.
  */
-final class WtyczkaTestowa extends plgHikashoppaymentPrzelewy24
+final class WtyczkaTestowa extends Przelewy24
 {
     public string $trescPowiadomienia = '';
 

@@ -10,21 +10,18 @@
 
 define('_JEXEC', 1);
 
-require __DIR__ . '/../src/lib/Autoloader.php';
+require __DIR__ . '/autoload.php';
 
-use WebService\Przelewy24\Amount;
-use WebService\Przelewy24\Autoloader;
-use WebService\Przelewy24\Config;
-use WebService\Przelewy24\Endpoints;
-use WebService\Przelewy24\Environment;
-use WebService\Przelewy24\Logger;
-use WebService\Przelewy24\Notification;
-use WebService\Przelewy24\OrderPaymentData;
-use WebService\Przelewy24\RegisterRequest;
-use WebService\Przelewy24\SessionId;
-use WebService\Przelewy24\Signature;
-
-Autoloader::register(__DIR__ . '/../src/lib');
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Amount;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Config;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Endpoints;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Environment;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Logger;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Notification;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\OrderPaymentData;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\RegisterRequest;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\SessionId;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Signature;
 
 $passed = 0;
 $failed = 0;
@@ -331,7 +328,7 @@ sekcja('Manifest: nazwa musi byc doslowna, nie kluczem jezykowym');
 // JText::_(), wiec klucz jezykowy pokazywalby sie w panelu dokladnie
 // tak, jak go zapisano. Wszystkie wtyczki platnosci HikaShopa trzymaja
 // tu nazwe doslowna.
-$manifest = simplexml_load_file(__DIR__ . '/../src/przelewy24.xml');
+$manifest = simplexml_load_file(__DIR__ . '/../plugin/przelewy24.xml');
 sprawdz('manifest jest poprawnym XML-em', true, $manifest !== false);
 
 if ($manifest !== false) {

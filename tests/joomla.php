@@ -46,7 +46,16 @@ if (!is_object($wtyczka)) {
     exit(1);
 }
 
-sprawdz('klasa nazywa sie zgodnie z wymogiem HikaShopa', get_class($wtyczka) === 'plgHikashoppaymentPrzelewy24');
+// Obiekt jest klasa z przestrzeni nazw, a plgHikashoppaymentPrzelewy24
+// to alias zakladany w przelewy24.php. HikaShop sprawdza istnienie tego
+// aliasu przez class_exists() i po nim tworzy obiekt, wiec musi byc.
+sprawdz(
+    'klasa zyje w przestrzeni nazw',
+    get_class($wtyczka) === 'Pablop76\Plugin\HikashopPayment\Przelewy24\Extension\Przelewy24',
+    get_class($wtyczka)
+);
+sprawdz('alias wymagany przez HikaShopa istnieje', class_exists('plgHikashoppaymentPrzelewy24', false));
+sprawdz('obiekt odpowiada aliasowi', $wtyczka instanceof plgHikashoppaymentPrzelewy24);
 sprawdz('dziedziczy po hikashopPaymentPlugin', $wtyczka instanceof hikashopPaymentPlugin);
 sprawdz('nazwa metody platnosci', $wtyczka->name === 'przelewy24');
 sprawdz('obsluguje PLN', in_array('PLN', $wtyczka->accepted_currencies, true));
@@ -54,20 +63,20 @@ sprawdz('obsluguje PLN', in_array('PLN', $wtyczka->accepted_currencies, true));
 echo PHP_EOL . '2. Autoloader biblioteki' . PHP_EOL;
 
 $klasy = [
-    'WebService\Przelewy24\Amount',
-    'WebService\Przelewy24\ApiClient',
-    'WebService\Przelewy24\Config',
-    'WebService\Przelewy24\Environment',
-    'WebService\Przelewy24\Logger',
-    'WebService\Przelewy24\Notification',
-    'WebService\Przelewy24\OrderPaymentData',
-    'WebService\Przelewy24\RefundService',
-    'WebService\Przelewy24\RefundStatus',
-    'WebService\Przelewy24\RegisterRequest',
-    'WebService\Przelewy24\SessionId',
-    'WebService\Przelewy24\Signature',
-    'WebService\Przelewy24\TransactionService',
-    'WebService\Przelewy24\Exception\ApiException',
+    'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Amount',
+    'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\ApiClient',
+    'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Config',
+    'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Environment',
+    'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Logger',
+    'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Notification',
+    'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\OrderPaymentData',
+    'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\RefundService',
+    'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\RefundStatus',
+    'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\RegisterRequest',
+    'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\SessionId',
+    'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Signature',
+    'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\TransactionService',
+    'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\ApiException',
 ];
 
 foreach ($klasy as $klasa) {
@@ -76,15 +85,15 @@ foreach ($klasy as $klasa) {
 
 echo PHP_EOL . '3. Zachowanie w srodowisku Joomli' . PHP_EOL;
 
-$config = WebService\Przelewy24\Config::fromPaymentParams(null);
+$config = Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Config::fromPaymentParams(null);
 sprawdz('pusta konfiguracja celuje w sandbox', $config->environment->isSandbox());
 sprawdz('pusta konfiguracja jest niekompletna', !$config->isComplete());
 
-$amount = WebService\Przelewy24\Amount::toMinorUnit(1.15);
+$amount = Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Amount::toMinorUnit(1.15);
 sprawdz('przeliczanie groszy dziala pod Joomla', $amount === 115, $amount . ' gr');
 
-$sesja = WebService\Przelewy24\SessionId::generate(7);
-sprawdz('generowanie sessionId dziala', WebService\Przelewy24\SessionId::isValid($sesja));
+$sesja = Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\SessionId::generate(7);
+sprawdz('generowanie sessionId dziala', Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\SessionId::isValid($sesja));
 
 echo PHP_EOL . '4. Metody wymagane przez HikaShopa' . PHP_EOL;
 

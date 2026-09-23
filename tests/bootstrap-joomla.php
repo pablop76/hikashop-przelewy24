@@ -95,7 +95,7 @@ function przedrostekTabel(): string
 /**
  * Konfiguracja P24 odczytana z opublikowanej metody platnosci.
  *
- * @return array{id: int, config: WebService\Przelewy24\Config}
+ * @return array{id: int, config: Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Config}
  */
 function metodaPlatnosciP24(): array
 {
@@ -112,7 +112,7 @@ function metodaPlatnosciP24(): array
     }
 
     $parametry = (object) (array) @unserialize($wiersz['payment_params']);
-    $config    = WebService\Przelewy24\Config::fromPaymentParams($parametry);
+    $config    = Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Config::fromPaymentParams($parametry);
 
     if (!$config->isComplete()) {
         fwrite(STDERR, 'Metoda platnosci nie ma kompletu danych P24.' . PHP_EOL);

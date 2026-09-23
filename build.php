@@ -9,7 +9,7 @@
  * nazwą pliku a tym, co zobaczy Joomla po instalacji.
  */
 
-const KATALOG_ZRODEL = __DIR__ . '/src';
+const KATALOG_ZRODEL = __DIR__ . '/plugin';
 const KATALOG_PACZEK = __DIR__ . '/build';
 const MANIFEST       = KATALOG_ZRODEL . '/przelewy24.xml';
 const NAZWA          = 'plg_hikashoppayment_przelewy24';

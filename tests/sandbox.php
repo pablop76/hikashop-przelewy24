@@ -33,20 +33,17 @@ if (!is_file($autoload)) {
 }
 
 require $autoload;
-require __DIR__ . '/../src/lib/Autoloader.php';
+require __DIR__ . '/autoload.php';
 
 use Joomla\Http\HttpFactory;
-use WebService\Przelewy24\Amount;
-use WebService\Przelewy24\ApiClient;
-use WebService\Przelewy24\Autoloader;
-use WebService\Przelewy24\Config;
-use WebService\Przelewy24\Exception\ApiException;
-use WebService\Przelewy24\Logger;
-use WebService\Przelewy24\RegisterRequest;
-use WebService\Przelewy24\SessionId;
-use WebService\Przelewy24\TransactionService;
-
-Autoloader::register(__DIR__ . '/../src/lib');
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Amount;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\ApiClient;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Config;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\ApiException;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Logger;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\RegisterRequest;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\SessionId;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\TransactionService;
 
 $config = Config::fromPaymentParams((object) require $credentialsPath);
 

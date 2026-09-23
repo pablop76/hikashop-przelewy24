@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<extension type="plugin" version="5.0" method="upgrade" group="hikashoppayment">
+	<!--
+		Nazwa dosłowna, nie klucz językowy. HikaShop w części widoków
+		wypisuje kolumnę name wprost z bazy, bez JText::_(), więc klucz
+		pokazywałby się w panelu jako PLG_HIKASHOPPAYMENT_PRZELEWY24.
+		Wszystkie wtyczki płatności HikaShopa robią to tak samo.
+	-->
+	<name>HikaShop Payment - Przelewy24</name>
+	<creationDate>2026-09-23</creationDate>
+	<version>1.0.0</version>
+	<author>Paweł Półtoraczyk</author>
+	<authorEmail>kontakt@web-service.com.pl</authorEmail>
+	<authorUrl>https://www.web-service.com.pl</authorUrl>
+	<copyright>(C) 2026 Paweł Półtoraczyk. All rights reserved.</copyright>
+	<license>GNU General Public License version 3 or later; see http://www.gnu.org/licenses/gpl-3.0.html</license>
+	<description>PLG_HIKASHOPPAYMENT_PRZELEWY24_XML_DESCRIPTION</description>
+
+	<namespace path="src">Pablop76\Plugin\HikashopPayment\Przelewy24</namespace>
+
+	<files>
+		<filename plugin="przelewy24">przelewy24.php</filename>
+		<filename>przelewy24_configuration.php</filename>
+		<filename>przelewy24_end.php</filename>
+		<filename>index.html</filename>
+		<folder>services</folder>
+		<folder>src</folder>
+		<folder>language</folder>
+	</files>
+
+	<scriptfile>script.php</scriptfile>
+
+	<languages>
+		<language tag="pl-PL">language/pl-PL/plg_hikashoppayment_przelewy24.ini</language>
+		<language tag="pl-PL">language/pl-PL/plg_hikashoppayment_przelewy24.sys.ini</language>
+		<language tag="en-GB">language/en-GB/plg_hikashoppayment_przelewy24.ini</language>
+		<language tag="en-GB">language/en-GB/plg_hikashoppayment_przelewy24.sys.ini</language>
+	</languages>
+
+	<params addpath="/components/com_hikashop/params">
+		<param name="pluginoptions" type="pluginoptions" default="plugin" label="hikashop" description="HikaShop options" />
+	</params>
+
+	<config>
+		<fields name="params" addfieldpath="/components/com_hikashop/fields">
+			<fieldset name="basic">
+				<field id="pluginoptions" name="pluginoptions" type="pluginoptions" label="hikashop" description="HikaShop options" />
+			</fieldset>
+		</fields>
+	</config>
+
+	<updateservers>
+		<server type="extension" priority="1" name="Przelewy24 dla HikaShop">https://raw.githubusercontent.com/pablop76/hikashop-przelewy24/release/przelewy24_update.xml</server>
+	</updateservers>
+</extension>

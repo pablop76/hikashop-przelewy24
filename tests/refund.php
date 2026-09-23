@@ -17,11 +17,11 @@ use Joomla\Http\Response;
 use Joomla\Http\TransportInterface;
 use Joomla\Uri\UriInterface;
 use Laminas\Diactoros\Stream;
-use WebService\Przelewy24\ApiClient;
-use WebService\Przelewy24\Exception\ApiException;
-use WebService\Przelewy24\Logger;
-use WebService\Przelewy24\RefundService;
-use WebService\Przelewy24\RefundStatus;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\ApiClient;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\ApiException;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Logger;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\RefundService;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\RefundStatus;
 
 $zdane = 0;
 $bledy = 0;
@@ -73,7 +73,7 @@ final class TransportZwrotu implements TransportInterface
 /**
  * Sklada usluge zwrotow na podstawionym transporcie.
  */
-function uslugaZwrotu(TransportZwrotu $transport, WebService\Przelewy24\Config $config): RefundService
+function uslugaZwrotu(TransportZwrotu $transport, Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Config $config): RefundService
 {
     $logger = new Logger('przelewy24', false, $config->secrets(), static function (): void {});
     $client = new ApiClient($config, $logger, '1.0.0', 'https://haskap.test', new Http([], $transport));
