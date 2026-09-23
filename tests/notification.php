@@ -215,8 +215,8 @@ $powiadomienie = static function (array $nadpisania = []) use ($config, $session
  *
  * @return array{wynik: mixed, status: string, wywolan: int}
  */
-$uruchom = static function (string $tresc, string $tokenWUrl) use ($orderId, $pdo, $prefix): array {
-    $atrapa = new TransportAtrapa();
+$uruchom = static function (string $tresc, string $tokenWUrl, ?TransportAtrapa $wlasnaAtrapa = null) use ($orderId, $pdo, $prefix): array {
+    $atrapa = $wlasnaAtrapa ?? new TransportAtrapa();
 
     $dispatcher = Joomla\CMS\Factory::getContainer()->get('dispatcher');
     $wtyczka    = new WtyczkaTestowa($dispatcher, ['name' => 'przelewy24', 'type' => 'hikashoppayment']);
@@ -309,6 +309,36 @@ wynik('status zostal przestawiony na oplacony dokladnie raz', $zmianStatusu === 
 $q = $pdo->prepare("SELECT COUNT(*) FROM {$prefix}hikashop_history WHERE history_order_id = :id");
 $q->execute([':id' => $orderId]);
 echo '       (wpisow w historii lacznie: ' . (int) $q->fetchColumn() . ')' . PHP_EOL;
+
+echo PHP_EOL . '4. Status po nieudanej weryfikacji' . PHP_EOL;
+
+// Zamowienie jest juz oplacone po sekcji 2. Nieudana weryfikacja NIE MOZE
+// go z tego statusu scofnac, bo status anulowania w HikaShopie potrafi
+// zwrocic towar na stan.
+$r = $uruchom($powiadomienie(), $tokenPoprawny, new TransportAtrapa(400, '{"error":"Error call 2","code":400}'));
+wynik('oplaconego zamowienia nie cofamy', $r['status'] === $config->verifiedStatus, $r['status']);
+
+/**
+ * Przywraca zamowienie do stanu sprzed zaplaty.
+ */
+$zresetuj = static function () use ($pdo, $prefix, $orderId): void {
+    $pdo->prepare("UPDATE {$prefix}hikashop_order SET order_status = 'created' WHERE order_id = :id")
+        ->execute([':id' => $orderId]);
+};
+
+$zresetuj();
+$r = $uruchom($powiadomienie(), $tokenPoprawny, new TransportAtrapa(400, '{"error":"Error call 2","code":400}'));
+wynik('definitywna odmowa P24 nadaje status nieudanej platnosci', $r['status'] === $config->invalidStatus, $r['status']);
+
+// Zerwane polaczenie albo sieczka zamiast odpowiedzi to NIE odmowa:
+// transakcja mogla zostac oplacona, a tylko odpowiedz do nas nie dotarla.
+$zresetuj();
+$r = $uruchom($powiadomienie(), $tokenPoprawny, new TransportAtrapa(200, 'to nie jest JSON'));
+wynik('niepoprawna odpowiedz NIE zmienia statusu', $r['status'] === 'created', $r['status']);
+
+$zresetuj();
+$r = $uruchom($powiadomienie(), $tokenPoprawny, new TransportAtrapa(200, '{"data":{"status":"rejected"}}'));
+wynik('odpowiedz inna niz success nadaje status nieudanej platnosci', $r['status'] === $config->invalidStatus, $r['status']);
 
 echo PHP_EOL . str_repeat('-', 60) . PHP_EOL;
 echo 'Zdane: ' . $zdane . ', niezdane: ' . $bledy . PHP_EOL;

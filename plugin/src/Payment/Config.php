@@ -29,8 +29,7 @@ final class Config
         public readonly bool $blikInShop,
         public readonly int $paymentMethodId,
         public readonly string $verifiedStatus,
-        public readonly string $invalidStatus,
-        public readonly string $pendingStatus
+        public readonly string $invalidStatus
     ) {
     }
 
@@ -60,8 +59,7 @@ final class Config
             // Wartosc dodatnia narzuca konkretna metode, na przyklad 303 dla rat.
             paymentMethodId: max(0, (int) self::read($params, 'payment_method_id', 0)),
             verifiedStatus: (string) self::read($params, 'verified_status', 'confirmed'),
-            invalidStatus: (string) self::read($params, 'invalid_status', 'cancelled'),
-            pendingStatus: (string) self::read($params, 'pending_status', 'created')
+            invalidStatus: (string) self::read($params, 'invalid_status', 'cancelled')
         );
     }
 

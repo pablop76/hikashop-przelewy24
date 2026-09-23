@@ -157,7 +157,6 @@ class Przelewy24 extends \hikashopPaymentPlugin
         $element->payment_params->debug           = 0;
         $element->payment_params->blik_in_shop   = 0;
         $element->payment_params->payment_method_id = 0;
-        $element->payment_params->pending_status  = 'created';
         $element->payment_params->verified_status = 'confirmed';
         $element->payment_params->invalid_status  = 'cancelled';
     }
@@ -421,6 +420,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
 
             if (!$verified) {
                 $logger->error('Weryfikacja nie potwierdziła zapłaty', ['order_id' => $orderId]);
+                $this->markInvalid($orderId, $config, $logger);
 
                 return false;
             }
@@ -478,6 +478,16 @@ class Przelewy24 extends \hikashopPaymentPlugin
                 'http'     => $exception->getHttpStatus(),
                 'powod'    => $exception->getMessage(),
             ]);
+
+            // Status zmieniamy wyłącznie wtedy, gdy P24 JAWNIE odmówiło,
+            // czyli odpowiedziało własnym kodem błędu. Zerwane połączenie,
+            // przekroczony czas albo sieczka zamiast JSON-a są niejawne:
+            // transakcja mogła zostać opłacona, a tylko odpowiedź do nas
+            // nie dotarła. Wtedy zostawiamy status w spokoju i czekamy
+            // na kolejne powiadomienie.
+            if ($exception->getApiCode() !== null) {
+                $this->markInvalid($orderId, $config, $logger);
+            }
 
             return false;
         } catch (Throwable $exception) {
@@ -764,6 +774,59 @@ class Przelewy24 extends \hikashopPaymentPlugin
     protected function readNotificationBody()
     {
         return (string) file_get_contents('php://input');
+    }
+
+    /**
+     * Nadaje zamówieniu status nieudanej płatności.
+     *
+     * Wołane wyłącznie wtedy, gdy P24 definitywnie odmówiło: albo
+     * odpowiedziało, że transakcja nie jest potwierdzona, albo odrzuciło
+     * weryfikację kodem HTTP. Zerwane połączenie odmową nie jest.
+     *
+     * Zamówienia już opłaconego nie ruszamy nigdy. W HikaShopie status
+     * anulowania potrafi zwrócić towar na stan, więc pomyłka w tę stronę
+     * byłaby kosztowna.
+     */
+    protected function markInvalid($orderId, Config $config, Logger $logger)
+    {
+        if ($config->invalidStatus === '') {
+            return;
+        }
+
+        $order = $this->getOrder($orderId);
+
+        if (empty($order)) {
+            return;
+        }
+
+        $current = (string) ($order->order_status ?? '');
+
+        if ($current === $config->invalidStatus) {
+            return;
+        }
+
+        if ($this->isAlreadyPaid($order, $config)) {
+            $logger->warning('Nie zmieniam statusu: zamówienie jest już opłacone', [
+                'order_id' => $orderId,
+                'status'   => $current,
+            ]);
+
+            return;
+        }
+
+        try {
+            $this->modifyOrder($orderId, $config->invalidStatus, true, false);
+
+            $logger->info('Zamówienie oznaczone jako nieopłacone', [
+                'order_id' => $orderId,
+                'status'   => $config->invalidStatus,
+            ]);
+        } catch (Throwable $exception) {
+            $logger->error('Nie udało się zmienić statusu na nieudaną płatność', [
+                'order_id' => $orderId,
+                'powod'    => $exception->getMessage(),
+            ]);
+        }
     }
 
     /**

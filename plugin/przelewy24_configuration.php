@@ -143,16 +143,6 @@ $params = $this->element->payment_params ?? new stdClass();
 </tr>
 <tr>
 	<td class="key">
-		<label for="data[payment][payment_params][pending_status]">
-			<?php echo Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_PENDING_STATUS'); ?>
-		</label>
-	</td>
-	<td>
-		<?php echo $this->data['order_statuses']->display('data[payment][payment_params][pending_status]', $params->pending_status ?? 'created'); ?>
-	</td>
-</tr>
-<tr>
-	<td class="key">
 		<label for="data[payment][payment_params][verified_status]">
 			<?php echo Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_VERIFIED_STATUS'); ?>
 		</label>
