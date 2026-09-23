@@ -181,6 +181,7 @@ $zleDane = new Config(
     environment: $config->environment,
     debug: false,
     blikInShop: false,
+    paymentMethodId: 0,
     verifiedStatus: 'confirmed',
     invalidStatus: 'cancelled',
     pendingStatus: 'created'

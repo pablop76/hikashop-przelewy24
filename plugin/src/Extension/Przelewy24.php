@@ -156,6 +156,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
         $element->payment_params->api_key         = '';
         $element->payment_params->debug           = 0;
         $element->payment_params->blik_in_shop   = 0;
+        $element->payment_params->payment_method_id = 0;
         $element->payment_params->pending_status  = 'created';
         $element->payment_params->verified_status = 'confirmed';
         $element->payment_params->invalid_status  = 'cancelled';
@@ -263,7 +264,9 @@ class Przelewy24 extends \hikashopPaymentPlugin
                 address: $this->billingField($order, 'address_street'),
                 zip: $this->billingField($order, 'address_post_code'),
                 city: $this->billingField($order, 'address_city'),
-                phone: $this->billingField($order, 'address_telephone')
+                phone: $this->billingField($order, 'address_telephone'),
+                // Zero zostawia wybor metody klientowi na stronie P24.
+                method: $config->paymentMethodId > 0 ? $config->paymentMethodId : null
             ));
 
             $this->p24_token       = $token;

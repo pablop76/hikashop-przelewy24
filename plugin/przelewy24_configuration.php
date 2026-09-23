@@ -128,6 +128,21 @@ $params = $this->element->payment_params ?? new stdClass();
 </tr>
 <tr>
 	<td class="key">
+		<label for="data[payment][payment_params][payment_method_id]">
+			<?php echo Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_METHOD_ID'); ?>
+		</label>
+	</td>
+	<td>
+		<input type="text" inputmode="numeric" size="8"
+		       name="data[payment][payment_params][payment_method_id]"
+		       value="<?php echo $this->escape($params->payment_method_id ?? ''); ?>" />
+		<p class="hikashop_help">
+			<?php echo Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_METHOD_ID_HELP'); ?>
+		</p>
+	</td>
+</tr>
+<tr>
+	<td class="key">
 		<label for="data[payment][payment_params][pending_status]">
 			<?php echo Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_PENDING_STATUS'); ?>
 		</label>

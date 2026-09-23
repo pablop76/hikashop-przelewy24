@@ -24,8 +24,8 @@ Wtyczka powstaje etapami. Rdzeń integracji jest gotowy i pokryty testami.
 | Zwroty pełne i częściowe | gotowe, patrz uwaga niżej |
 | Pełny przebieg zapłaty w sandboksie | wymaga adresu osiągalnego z internetu |
 | BLIK z kodem w sklepie | gotowe |
-| Karta w sklepie, Apple Pay, Google Pay | planowane |
-| Raty | planowane |
+| Karta w sklepie, Apple Pay, Google Pay | wstrzymane, patrz uwaga niżej |
+| Raty | gotowe, przez narzuconą metodę 303 |
 
 ### Uwaga o zwrotach
 
@@ -78,6 +78,36 @@ kod niczego nie zmieni, więc od razu kierujemy klienta do innej metody.
 Strona oczekiwania na potwierdzenie **nie odpytuje P24 i nie odświeża się**.
 Zapłatę potwierdza powiadomienie wysłane przez P24 na serwer, a nie cokolwiek,
 co dzieje się w przeglądarce klienta.
+
+### Raty
+
+Raty w P24 to zwykła płatność przez stronę wyboru, z narzuconą metodą **303**.
+Wpisanie tego numeru w polu narzuconej metody płatności kieruje klienta prosto
+do rat, z pominięciem ekranu wyboru.
+
+Żeby mieć w sklepie osobno zwykłą płatność i raty, utwórz **drugą metodę
+płatności tego samego typu** (HikaShop na to pozwala) i wpisz w niej 303.
+Ograniczenia kwotowe ustaw polami najniższej i najwyższej wartości zamówienia,
+które HikaShop ma u siebie — nie dublujemy ich we wtyczce.
+
+### Karta w sklepie: dlaczego wstrzymane
+
+Karty **już działają** przez stronę płatności P24: klient wybiera je tam obok
+BLIK-a i przelewu. Nic nie trzeba do tego dodawać.
+
+Wstrzymany jest wyłącznie formularz karty osadzony w sklepie. Wymaga on skryptu
+P24 (`Przelewy24CardWhileLabelHandler`), którego adresu ani kontraktu
+inicjalizacji nie ma w publicznie dostępnym kodzie, a dokumentacja P24 jest
+renderowana JavaScriptem i nie daje się odczytać automatycznie.
+
+Dobra wiadomość z analizy oficjalnej wtyczki dla WooCommerce: **numer karty
+nigdy nie trafia na serwer sklepu**. Tokenizuje go skrypt P24 w przeglądarce,
+a sklep dostaje tylko identyfikator sesji i podpis
+`sha384({merchantId, sessionId, crc})`. Zakres PCI-DSS pozostaje więc mały,
+wbrew pierwszemu wrażeniu.
+
+Do dokończenia potrzebne są dwie rzeczy: opis inicjalizacji formularza
+z dokumentacji P24 oraz włączenie metod „w sklepie" na koncie sprzedawcy.
 
 ## Instalacja
 

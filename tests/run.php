@@ -323,6 +323,35 @@ sprawdz('odczyt liczby z pola po serialize', 777, OrderPaymentData::getInt($zamo
 sprawdz('brak pola daje wartosc domyslna', '', OrderPaymentData::getString(null, OrderPaymentData::SESSION_ID));
 sprawdz('uszkodzone pole nie wysypuje odczytu', '', OrderPaymentData::getString((object) ['order_payment_params' => 'sieczka'], OrderPaymentData::SESSION_ID));
 
+sekcja('RegisterRequest: narzucona metoda platnosci');
+
+/**
+ * Buduje zadanie rejestracji z opcjonalnie narzucona metoda.
+ *
+ * @return array<string, mixed>
+ */
+function zadanieZMetoda(Config $config, ?int $metoda): array
+{
+    return (new RegisterRequest(
+        sessionId: 'hika_9_abc',
+        amountInMinorUnits: 5000,
+        currency: 'PLN',
+        description: 'test',
+        email: 'a@example.invalid',
+        urlReturn: 'https://sklep.test/r',
+        urlStatus: 'https://sklep.test/n',
+        method: $metoda
+    ))->toPayload($config);
+}
+
+sprawdz('brak metody nie dodaje pola do zadania', false, array_key_exists('method', zadanieZMetoda($config, null)));
+sprawdz('raty trafiaja do zadania jako method 303', 303, zadanieZMetoda($config, 303)['method']);
+sprawdz('zero nie narzuca metody', false, array_key_exists('method', zadanieZMetoda($config, 0)));
+
+sprawdz('domyslnie metoda nie jest narzucona', 0, Config::fromPaymentParams(null)->paymentMethodId);
+sprawdz('ujemna wartosc jest sprowadzana do zera', 0, Config::fromPaymentParams((object) ['payment_method_id' => -5])->paymentMethodId);
+sprawdz('raty odczytane z konfiguracji', 303, Config::fromPaymentParams((object) ['payment_method_id' => '303'])->paymentMethodId);
+
 sekcja('Manifest: nazwa musi byc doslowna, nie kluczem jezykowym');
 // HikaShop w czesci widokow wypisuje kolumne name wprost z bazy, bez
 // JText::_(), wiec klucz jezykowy pokazywalby sie w panelu dokladnie

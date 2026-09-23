@@ -27,6 +27,7 @@ final class Config
         public readonly Environment $environment,
         public readonly bool $debug,
         public readonly bool $blikInShop,
+        public readonly int $paymentMethodId,
         public readonly string $verifiedStatus,
         public readonly string $invalidStatus,
         public readonly string $pendingStatus
@@ -55,6 +56,9 @@ final class Config
             // Kod BLIK w kasie wymaga osobnej zgody P24 na koncie sprzedawcy,
             // wiec domyslnie wylaczony.
             blikInShop: (string) self::read($params, 'blik_in_shop', '0') === '1',
+            // Zero oznacza, ze metode wybiera klient na stronie P24.
+            // Wartosc dodatnia narzuca konkretna metode, na przyklad 303 dla rat.
+            paymentMethodId: max(0, (int) self::read($params, 'payment_method_id', 0)),
             verifiedStatus: (string) self::read($params, 'verified_status', 'confirmed'),
             invalidStatus: (string) self::read($params, 'invalid_status', 'cancelled'),
             pendingStatus: (string) self::read($params, 'pending_status', 'created')
