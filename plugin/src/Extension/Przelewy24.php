@@ -528,6 +528,13 @@ class Przelewy24 extends \hikashopPaymentPlugin
 
         $wpisany = (string) Factory::getApplication()->getUserState(self::BLIK_STATE_KEY, '');
 
+        // Bez tej flagi HikaShop dokłada pod polem własny przycisk „Wyślij”.
+        // Zapisuje on tylko blok płatności i nie składa zamówienia, więc
+        // klient klika go, widzi kręciołek i myśli, że zapłacił. Pole leży
+        // w formularzu kasy, więc kod i tak trafia do nas razem z przyciskiem
+        // składającym zamówienie.
+        $method->custom_html_no_btn = true;
+
         $method->custom_html = '<div class="hikashop_przelewy24_blik">'
             . '<label for="hikashop_przelewy24_blik_code">'
             . $this->escape(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_BLIK_CODE')) . '</label> '
