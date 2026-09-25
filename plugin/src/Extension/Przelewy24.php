@@ -1159,18 +1159,40 @@ class Przelewy24 extends \hikashopPaymentPlugin
      */
     protected function customerEmail($order)
     {
-        $email = (string) ($order->customer->user_email ?? '');
+        $email = self::emailFrom($order->customer->user_email ?? '');
 
         if ($email === '' && !empty($order->order_user_id)) {
             $customer = hikashop_get('class.user')->get((int) $order->order_user_id);
-            $email    = (string) ($customer->user_email ?? '');
+            $email    = self::emailFrom($customer->user_email ?? '');
         }
 
         if ($email === '') {
-            $email = (string) ($this->user->user_email ?? '');
+            $email = self::emailFrom($this->user->user_email ?? '');
         }
 
         return $email;
+    }
+
+    /**
+     * Wyciąga adres z pola user_email.
+     *
+     * Przy zakupie gościa HikaShop przekazuje w zamówieniu user_email jako
+     * tablicę z jednym adresem. Rzutowanie na tekst dawało "Array", a P24
+     * odrzucało rejestrację błędem "Invalid email".
+     */
+    private static function emailFrom($value): string
+    {
+        if (\is_array($value)) {
+            $value = reset($value);
+        }
+
+        if (!\is_string($value)) {
+            return '';
+        }
+
+        $value = trim($value);
+
+        return filter_var($value, FILTER_VALIDATE_EMAIL) !== false ? $value : '';
     }
 
     protected function currencyCode()

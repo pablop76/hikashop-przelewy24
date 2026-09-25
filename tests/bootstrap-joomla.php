@@ -48,8 +48,16 @@ $app->loadLanguage(
 
 // HikaShop uzywa starych nazw klas (JFactory, JText, JHtml). W zadaniu
 // przegladarkowym rejestruje je wtyczka "Behaviour - Backward Compatibility",
-// ktora poza przegladarka sie nie uruchamia.
-require_once JPATH_PLUGINS . '/behaviour/compat/src/classmap/classmap.php';
+// ktora poza przegladarka sie nie uruchamia. Joomla 5 ma ja w "compat",
+// Joomla 6 w "compat6".
+foreach (['compat', 'compat6'] as $compat) {
+    $classmap = JPATH_PLUGINS . '/behaviour/' . $compat . '/src/classmap/classmap.php';
+
+    if (is_file($classmap)) {
+        require_once $classmap;
+        break;
+    }
+}
 
 // Mape przestrzeni nazw rozszerzen aplikacja tworzy dopiero w execute(),
 // ktorego tu nie wolamy. Bez niej HikaShop wywraca sie przy imporcie
