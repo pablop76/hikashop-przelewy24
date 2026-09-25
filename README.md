@@ -197,7 +197,7 @@ płatności → Nowa → Przelewy24.
 Wtyczka instaluje dwa logotypy do obrazków metod płatności HikaShopa
 (`media/com_hikashop/images/payment`): `przelewy24.svg`, domyślny obrazek
 metody, oraz `BLIK.svg`. Oba można wybrać w polu „Obrazki” metody płatności.
-Logotypy pochodzą z oficjalnej wtyczki Przelewy24 dla WooCommerce.
+Logotypy pochodzą z oficjalnych materiałów BLIK i Przelewów24.
 
 ## Zasady integracji
 
