@@ -10,6 +10,7 @@ namespace Pablop76\Plugin\HikashopPayment\Przelewy24\Extension;
 
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Uri\Uri;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Amount;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\ApiClient;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\BlikService;
@@ -66,7 +67,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
     /**
      * Wersja wtyczki, wysyłana do P24 w nagłówku diagnostycznym.
      */
-    public const VERSION = '1.0.4';
+    public const VERSION = '1.0.5';
 
     protected $autoloadLanguage = true;
 
@@ -329,7 +330,10 @@ class Przelewy24 extends \hikashopPaymentPlugin
                 city: $this->billingField($order, 'address_city'),
                 phone: $this->billingField($order, 'address_telephone'),
                 // Zero zostawia wybor metody klientowi na stronie P24.
-                method: $config->paymentMethodId > 0 ? $config->paymentMethodId : null
+                method: $config->paymentMethodId > 0 ? $config->paymentMethodId : null,
+                // Dane płatnika potrzebne tylko do BLIK-a w sklepie
+                clientIp: $config->blikInShop ? $this->clientIp() : '',
+                clientUserAgent: $config->blikInShop ? $this->clientUserAgent() : ''
             ));
 
             $this->p24_token       = $token;
@@ -573,6 +577,9 @@ class Przelewy24 extends \hikashopPaymentPlugin
         $method->custom_html_no_btn = true;
 
         $method->custom_html = '<div class="hikashop_przelewy24_blik">'
+            . '<img class="hikashop_przelewy24_blik_logo" src="'
+            . $this->escape(Uri::root(true) . '/media/com_hikashop/images/payment/BLIK.svg')
+            . '" alt="BLIK" width="48" height="24" style="vertical-align:middle;margin-right:8px" />'
             . '<label for="hikashop_przelewy24_blik_code">'
             . $this->escape(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_BLIK_CODE')) . '</label> '
             . '<input type="text" id="hikashop_przelewy24_blik_code" name="hikashop_przelewy24_blik_code"'
@@ -1193,6 +1200,22 @@ class Przelewy24 extends \hikashopPaymentPlugin
         $value = trim($value);
 
         return filter_var($value, FILTER_VALIDATE_EMAIL) !== false ? $value : '';
+    }
+
+    /**
+     * Adres IP klienta z żądania (dla additional.PSU przy BLIK-u).
+     *
+     * Bierzemy REMOTE_ADDR, a nie nagłówki X-Forwarded-For: te ustawia
+     * klient i nie wolno im wierzyć bez znajomości serwera pośredniczącego.
+     */
+    protected function clientIp(): string
+    {
+        return (string) Factory::getApplication()->input->server->getString('REMOTE_ADDR', '');
+    }
+
+    protected function clientUserAgent(): string
+    {
+        return (string) Factory::getApplication()->input->server->getString('HTTP_USER_AGENT', '');
     }
 
     protected function currencyCode()

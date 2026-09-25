@@ -28,6 +28,8 @@ final class RegisterRequest
     /**
      * @param  int     $amountInMinorUnits  kwota w groszach
      * @param  int     $timeLimit           limit w minutach, 0 oznacza limit P24
+     * @param  string  $clientIp            IP klienta, wysyłane jako additional.PSU
+     * @param  string  $clientUserAgent     przeglądarka klienta, jw.
      */
     public function __construct(
         public readonly string $sessionId,
@@ -45,7 +47,9 @@ final class RegisterRequest
         public readonly string $city = '',
         public readonly string $phone = '',
         public readonly int $timeLimit = 0,
-        public readonly ?int $method = null
+        public readonly ?int $method = null,
+        public readonly string $clientIp = '',
+        public readonly string $clientUserAgent = ''
     ) {
     }
 
@@ -100,6 +104,23 @@ final class RegisterRequest
 
         if ($this->method !== null && $this->method > 0) {
             $payload['method'] = $this->method;
+        }
+
+        // BLIK w sklepie (chargeByCode) wymaga danych płatnika już przy
+        // rejestracji: obiekt PSU wewnątrz additional (spec P24,
+        // RecurringParams.token). Wysyłamy go tylko z adresem IP, bo bez
+        // niego obiekt jest niekompletny.
+        $ip = trim($this->clientIp);
+
+        if ($ip !== '' && filter_var($ip, FILTER_VALIDATE_IP) !== false) {
+            $psu = ['IP' => $ip];
+            $ua  = self::trimTo($this->clientUserAgent, 255);
+
+            if ($ua !== '') {
+                $psu['userAgent'] = $ua;
+            }
+
+            $payload['additional'] = ['PSU' => $psu];
         }
 
         return $payload;

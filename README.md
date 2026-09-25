@@ -98,6 +98,11 @@ włącza opiekun klienta. Przelewy24 nie podają adresu e-mail wsparcia, jest
 [formularz kontaktowy](https://www.przelewy24.pl/centrum-pomocy/wsparcie-techniczne-api/brakuje-odpowiedzi-na-twoje-pytanie).
 Poproś o `paymentMethod/blik/chargeByCode` osobno dla sandboxa i produkcji.
 
+Od 1.0.5 rejestracja transakcji przy włączonym BLIK-u w kasie niesie dane
+płatnika, których P24 wymaga do `chargeByCode`: obiekt `additional.PSU` z adresem
+IP (`REMOTE_ADDR`, bez ufania nagłówkom `X-Forwarded-For`) i przeglądarką klienta.
+Przy polu kodu stoi logo BLIK.
+
 Pole nie ma przycisku „Wyślij”, który HikaShop domyślnie dokłada pod własnymi
 polami metody płatności. Ten przycisk tylko zapisywał blok płatności, więc
 klient wpisywał kod, klikał go i czekał na zapłatę, której nie było.
@@ -188,6 +193,11 @@ Zainstaluj w panelu Joomli. Budowanie wymaga rozszerzenia `zip` w PHP.
 
 Po instalacji metodę płatności dodaje się w HikaShopie: System → Metody
 płatności → Nowa → Przelewy24.
+
+Wtyczka instaluje dwa logotypy do obrazków metod płatności HikaShopa
+(`media/com_hikashop/images/payment`): `przelewy24.svg`, domyślny obrazek
+metody, oraz `BLIK.svg`. Oba można wybrać w polu „Obrazki” metody płatności.
+Logotypy pochodzą z oficjalnej wtyczki Przelewy24 dla WooCommerce.
 
 ## Zasady integracji
 
@@ -330,7 +340,7 @@ ani od Joomli poza klientem HTTP.
 
 ## Testy
 
-Siedem zestawów, każdy o innym zasięgu.
+Dziewięć zestawów, każdy o innym zasięgu.
 
 ```bash
 php tests/run.php          # biblioteka, bez Joomli i bez sieci
@@ -341,6 +351,7 @@ php tests/refund.php       # zwroty, siec podstawiona atrapa
 php tests/blik.php         # BLIK w kasie, siec podstawiona atrapa
 php tests/duplikaty.php    # czy ponowienie nie dubluje transakcji, zywe P24
 php tests/retry.php        # przycisk ponowienia zaplaty, siec podstawiona atrapa
+php tests/email.php        # adres e-mail klienta, takze goscia
 ```
 
 `run.php` obejmuje przeliczanie kwot, kolejność kluczy w podpisach, odrzucanie

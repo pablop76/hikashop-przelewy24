@@ -313,6 +313,27 @@ $zadanieObcyJezyk = new RegisterRequest(
 );
 sprawdz('nieobslugiwany jezyk zamienia sie na angielski', 'en', $zadanieObcyJezyk->toPayload($config)['language']);
 
+sekcja('RegisterRequest: dane platnika (additional.PSU) dla BLIK-a w sklepie');
+$psu = static fn (string $ip, string $ua = ''): array => (new RegisterRequest(
+    sessionId: $sesja,
+    amountInMinorUnits: 100,
+    currency: 'PLN',
+    description: 'test',
+    email: 'a@example.invalid',
+    urlReturn: 'https://sklep.test/r',
+    urlStatus: 'https://sklep.test/n',
+    clientIp: $ip,
+    clientUserAgent: $ua
+))->toPayload($config);
+
+sprawdz('bez IP nie ma pola additional', false, array_key_exists('additional', $psu('')));
+sprawdz('IPv4 trafia do PSU', '93.105.192.95', $psu('93.105.192.95', 'Chrome')['additional']['PSU']['IP'] ?? null);
+sprawdz('przegladarka trafia do PSU', 'Chrome', $psu('93.105.192.95', 'Chrome')['additional']['PSU']['userAgent'] ?? null);
+sprawdz('IPv6 jest przyjmowane', '2001:db8::1', $psu('2001:db8::1')['additional']['PSU']['IP'] ?? null);
+sprawdz('pusta przegladarka nie wysyla userAgent', false, isset($psu('10.0.0.1')['additional']['PSU']['userAgent']));
+sprawdz('bledne IP pomija PSU', false, array_key_exists('additional', $psu('to-nie-ip', 'Chrome')));
+sprawdz('userAgent przyciety do 255 znakow', 255, mb_strlen($psu('10.0.0.1', str_repeat('a', 400))['additional']['PSU']['userAgent']));
+
 sekcja('OrderPaymentData: odczyt pola HikaShopa');
 $zamowienieObiekt = (object) ['order_payment_params' => (object) ['p24_session_id' => $sesja]];
 sprawdz('odczyt z obiektu', $sesja, OrderPaymentData::getString($zamowienieObiekt, OrderPaymentData::SESSION_ID));
