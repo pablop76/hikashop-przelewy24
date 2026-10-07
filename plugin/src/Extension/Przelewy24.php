@@ -67,7 +67,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
     /**
      * Wersja wtyczki, wysyłana do P24 w nagłówku diagnostycznym.
      */
-    public const VERSION = '1.0.5';
+    public const VERSION = '1.0.6';
 
     protected $autoloadLanguage = true;
 

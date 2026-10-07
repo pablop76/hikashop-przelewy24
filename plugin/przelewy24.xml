@@ -7,8 +7,8 @@
 		Wszystkie wtyczki płatności HikaShopa robią to tak samo.
 	-->
 	<name>HikaShop Payment - Przelewy24</name>
-	<creationDate>2026-09-25</creationDate>
-	<version>1.0.5</version>
+	<creationDate>2026-10-07</creationDate>
+	<version>1.0.6</version>
 	<author>Paweł Półtoraczyk</author>
 	<authorEmail>kontakt@web-service.com.pl</authorEmail>
 	<authorUrl>https://www.web-service.com.pl</authorUrl>
