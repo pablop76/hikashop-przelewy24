@@ -228,6 +228,48 @@ wynik('zero wylacza', false, $config0->blikInShop);
 wynik('jedynka wlacza', true, $config1->blikInShop);
 wynik('pod polem BLIK nie ma przycisku Wyslij HikaShopa', true, !empty($metodaZBlik->custom_html_no_btn));
 
+// Strona "Zaplac teraz" HikaShopa (order&task=pay) nie wyswietla wlasnego
+// HTML-a metody platnosci. Z polem BLIK klient krazyl miedzy wyborem metody
+// a pusta strona i nie docieral do bramki (07.10.2026).
+$aplikacja = Joomla\CMS\Factory::getApplication();
+$wejscie   = $aplikacja->input;
+$pobierzKod = new ReflectionMethod($wtyczka, 'takeBlikCode');
+
+$wejscie->set('ctrl', 'order');
+$wejscie->set('task', 'pay');
+
+$metodaZaplacTeraz = (object) ['payment_params' => (object) ['blik_in_shop' => '1'], 'custom_html' => ''];
+$wtyczka->needCC($metodaZaplacTeraz);
+wynik('na stronie Zaplac teraz pola BLIK nie ma', '', $metodaZaplacTeraz->custom_html);
+
+$aplikacja->setUserState($wtyczka::BLIK_STATE_KEY, '777123');
+wynik('stary kod z sesji nie jest uzyty przy Zaplac teraz', '', $pobierzKod->invoke($wtyczka, $config1));
+wynik('stary kod znika z sesji', '', (string) $aplikacja->getUserState($wtyczka::BLIK_STATE_KEY, ''));
+
+$wejscie->set('ctrl', '');
+$wejscie->set('task', '');
+$wejscie->set('view', 'order');
+$wejscie->set('layout', 'pay');
+
+$metodaWidok = (object) ['payment_params' => (object) ['blik_in_shop' => '1'], 'custom_html' => ''];
+$wtyczka->needCC($metodaWidok);
+wynik('to samo przy adresie z view i layout', '', $metodaWidok->custom_html);
+
+$wejscie->set('view', '');
+$wejscie->set('layout', '');
+$wejscie->set('ctrl', 'checkout');
+$wejscie->set('task', 'show');
+
+$metodaKasa = (object) ['payment_params' => (object) ['blik_in_shop' => '1'], 'custom_html' => ''];
+$wtyczka->needCC($metodaKasa);
+wynik('w kasie pole BLIK zostaje', true, str_contains($metodaKasa->custom_html, 'hikashop_przelewy24_blik_code'));
+
+$aplikacja->setUserState($wtyczka::BLIK_STATE_KEY, '777123');
+wynik('w kasie kod z sesji jest uzyty', '777123', $pobierzKod->invoke($wtyczka, $config1));
+
+$wejscie->set('ctrl', '');
+$wejscie->set('task', '');
+
 echo PHP_EOL . '9. BLIK Level 0 niewlaczony na koncie' . PHP_EOL;
 
 // Na zywym sandboksie 23.09.2026: rejestracja przechodzi, a chargeByCode

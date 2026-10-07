@@ -110,6 +110,14 @@ klient wpisywał kod, klikał go i czekał na zapłatę, której nie było.
 Pozostawienie pola pustego kieruje klienta zwykłą drogą na stronę płatności
 P24, więc włączenie BLIK-a niczego nie zabiera.
 
+Na stronie „Zapłać teraz” HikaShopa (`order&task=pay`) pola kodu nie ma
+i klient idzie od razu na stronę płatności P24. Ta strona nie wyświetla
+własnego HTML-a metody płatności, a jej kontroler czeka na znacznik
+`payment_custom_html`, którego formularz nie wysyła. Do wersji 1.0.5 włącznie
+klient krążył przez to między wyborem metody a stroną z samą kwotą i nie
+docierał do bramki. Kod zapamiętany w sesji z porzuconej kasy jest tam
+pomijany, bo dawno stracił ważność.
+
 Trzy rzeczy rozstrzygnięte świadomie:
 
 **Kod nie trafia do bazy.** Jest jednorazowy i ważny około dwóch minut, więc

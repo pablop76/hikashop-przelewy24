@@ -567,6 +567,16 @@ class Przelewy24 extends \hikashopPaymentPlugin
             return;
         }
 
+        // Strona „Zapłać teraz” HikaShopa nie wyświetla własnego HTML-a
+        // metody płatności ani nie odsyła znacznika payment_custom_html,
+        // na który czeka jej kontroler. Z polem BLIK klient krążył tam
+        // w kółko między wyborem metody a pustą stroną i nigdy nie
+        // docierał do bramki. Poza kasą pola więc nie ma: klient idzie
+        // prosto na stronę płatności P24, gdzie BLIK i tak jest.
+        if ($this->isPayLaterRequest()) {
+            return;
+        }
+
         $wpisany = (string) Factory::getApplication()->getUserState(self::BLIK_STATE_KEY, '');
 
         // Bez tej flagi HikaShop dokłada pod polem własny przycisk „Wyślij”.
@@ -634,7 +644,28 @@ class Przelewy24 extends \hikashopPaymentPlugin
         $code = (string) $app->getUserState(self::BLIK_STATE_KEY, '');
         $app->setUserState(self::BLIK_STATE_KEY, '');
 
+        // Na stronie „Zapłać teraz” pola kodu nie ma, więc kod w sesji
+        // może pochodzić tylko z porzuconej kasy i jest dawno nieważny.
+        if ($this->isPayLaterRequest()) {
+            return '';
+        }
+
         return BlikService::normaliseCode($code);
+    }
+
+    /**
+     * Czy klient płaci za istniejące zamówienie przez „Zapłać teraz”
+     * HikaShopa (order&task=pay), a nie składa nowe w kasie.
+     */
+    protected function isPayLaterRequest()
+    {
+        $input = Factory::getApplication()->input;
+
+        // HikaShop przyjmuje też parę view/layout zamiast ctrl/task.
+        $ctrl = $input->getCmd('ctrl', '') ?: $input->getCmd('view', '');
+        $task = $input->getCmd('task', '') ?: $input->getCmd('layout', '');
+
+        return $ctrl === 'order' && $task === 'pay';
     }
 
     /**
