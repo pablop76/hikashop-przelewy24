@@ -367,8 +367,15 @@ niepoprawnych powiadomień, budowanie żądania rejestracji i odczyt danych
 zapisanych przy zamówieniu. Nie wymaga Joomli, HikaShopa ani composera.
 
 `sandbox.php` odzywa się do sandboksa P24 i sprawdza dane dostępowe,
-rejestrację transakcji, adres strony płatności oraz obsługę błędów. Czyta
-dane z `tests/credentials.local.php`, którego nie ma w repozytorium. Wzór:
+rejestrację transakcji, adres strony płatności oraz obsługę błędów.
+
+Dane konta testowego bierze z opublikowanej metody płatności `przelewy24`
+w lokalnym sklepie, czyli z tego samego miejsca co wtyczka
+(`tests/dane-dostepowe.php`). Klucze wpisuje się więc raz, w konfiguracji
+metody płatności. Metoda w trybie produkcyjnym jest pomijana, bo lokalna
+kopia sklepu bywa kopią produkcji. Gdy sklepu albo metody nie ma, test czyta
+zapasowy plik `tests/credentials.local.php`, którego nie ma w repozytorium.
+Pierwsza linia wyniku mówi, skąd dane pochodzą. Wzór pliku:
 
 ```php
 <?php

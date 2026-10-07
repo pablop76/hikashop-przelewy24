@@ -5,21 +5,16 @@
  * Uruchomienie:
  *   php tests/sandbox.php
  *
- * Wymaga pliku tests/credentials.local.php z danymi konta testowego
- * oraz lokalnej instalacji Joomli, z której bierzemy klienta HTTP.
+ * Dane konta testowego bierze z metody płatności w lokalnym sklepie,
+ * a gdy jej nie ma, z pliku tests/credentials.local.php (szczegóły
+ * w tests/dane-dostepowe.php). Wymaga lokalnej instalacji Joomli,
+ * z której bierzemy klienta HTTP.
  *
  * Test nigdy nie odzywa się do produkcji: Environment wymusza sandbox
  * dla każdej wartości test_mode innej niż dokładnie "0".
  */
 
 define('_JEXEC', 1);
-
-$credentialsPath = __DIR__ . '/credentials.local.php';
-
-if (!is_file($credentialsPath)) {
-    fwrite(STDERR, 'Brak pliku tests/credentials.local.php z danymi sandboxa.' . PHP_EOL);
-    exit(2);
-}
 
 // Klient HTTP Joomli. Ścieżkę można nadpisać zmienną środowiskową,
 // gdyby lokalna instalacja stała gdzie indziej.
@@ -34,6 +29,7 @@ if (!is_file($autoload)) {
 
 require $autoload;
 require __DIR__ . '/autoload.php';
+require __DIR__ . '/dane-dostepowe.php';
 
 use Joomla\Http\HttpFactory;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Amount;
@@ -45,7 +41,7 @@ use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\RegisterRequest;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\SessionId;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\TransactionService;
 
-$config = Config::fromPaymentParams((object) require $credentialsPath);
+$config = Config::fromPaymentParams((object) daneDostepoweP24());
 
 if (!$config->environment->isSandbox()) {
     fwrite(STDERR, 'PRZERWANO: konfiguracja nie wskazuje na sandbox.' . PHP_EOL);
@@ -72,7 +68,7 @@ function wynik(string $opis, bool $ok, string $szczegol = ''): void
 
 echo 'Srodowisko: ' . $config->environment->value . ' (' . $config->environment->baseUrl() . ')' . PHP_EOL;
 echo 'Sprzedawca: ' . $config->merchantId . PHP_EOL;
-echo 'Klucze:     wczytane z pliku lokalnego, nie wypisujemy ich' . PHP_EOL;
+echo 'Klucze:     nie wypisujemy ich' . PHP_EOL;
 
 // Logger bez zapisu do HikaShopa; wypisujemy na ekran, z wymazanymi sekretami.
 $logger = new Logger('przelewy24', false, $config->secrets(), static function (string $linia): void {

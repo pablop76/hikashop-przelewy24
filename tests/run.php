@@ -405,6 +405,44 @@ if ($manifest !== false) {
     }
 }
 
+sekcja('Dane dostepowe testow: metoda platnosci ze sklepu');
+
+require __DIR__ . '/dane-dostepowe.php';
+
+$metodaSklepu = static fn (array $parametry): array => [
+    'payment_id'     => 8,
+    'payment_params' => serialize((object) $parametry),
+];
+$komplet = ['merchant_id' => '123456', 'pos_id' => '', 'crc_key' => 'abcdef0123456789', 'api_key' => 'klucz-api', 'test_mode' => '1'];
+
+[$daneSklepu, $opisSklepu] = daneP24ZMetody($metodaSklepu($komplet + ['blik_in_shop' => '1']));
+sprawdz('metoda sandboxowa ze sklepu jest uzyta', 'abcdef0123456789', $daneSklepu['crc_key'] ?? null);
+sprawdz('opis wskazuje metode platnosci', 'metoda platnosci id=8', $opisSklepu);
+sprawdz('puste pos_id przyjmuje identyfikator sprzedawcy', 123456, $daneSklepu['pos_id'] ?? null);
+sprawdz(
+    'do testow trafia tylko piec pol dostepowych',
+    ['merchant_id', 'pos_id', 'crc_key', 'api_key', 'test_mode'],
+    array_keys((array) $daneSklepu)
+);
+
+// Lokalna kopia sklepu bywa swieza kopia produkcji. Jej dane nie moga
+// trafic do testow, ktore rejestruja transakcje.
+[$daneProdukcji, $opisProdukcji] = daneP24ZMetody($metodaSklepu(['test_mode' => '0'] + $komplet));
+sprawdz('metoda w trybie produkcyjnym jest pomijana', null, $daneProdukcji);
+sprawdz('powod pominiecia wymienia tryb produkcyjny', true, str_contains($opisProdukcji, 'PRODUKCYJNYM'));
+
+[$daneNiepelne] = daneP24ZMetody($metodaSklepu(['crc_key' => ''] + $komplet));
+sprawdz('metoda bez klucza CRC jest pomijana', null, $daneNiepelne);
+
+[$daneBezMetody, $opisBezMetody] = daneP24ZMetody('w sklepie nie ma opublikowanej metody przelewy24');
+sprawdz('brak metody w sklepie nie daje danych', null, $daneBezMetody);
+sprawdz('powod braku jest przekazany dalej', 'w sklepie nie ma opublikowanej metody przelewy24', $opisBezMetody);
+
+[$daneSieczka] = daneP24ZMetody(['payment_id' => 8, 'payment_params' => 'to nie jest serialize']);
+sprawdz('nieczytelne parametry metody nie daja danych', null, $daneSieczka);
+
+sprawdz('dane produkcyjne z pliku nie udaja sandboxa', '0', uporzadkujDaneP24((object) (['test_mode' => '0'] + $komplet))['test_mode']);
+
 echo PHP_EOL . str_repeat('-', 60) . PHP_EOL;
 echo 'Zdane: ' . $passed . ', niezdane: ' . $failed . PHP_EOL;
 
