@@ -66,11 +66,15 @@ final class ApiClient
     }
 
     /**
+     * @param  list<int>  $expectedStatuses  kody HTTP, które przy tym pytaniu są zwykłą
+     *                                       odpowiedzią, a nie awarią; nadal kończą się
+     *                                       wyjątkiem, ale nie zaśmiecają dziennika błędami
+     *
      * @throws ApiException
      */
-    public function get(string $endpoint): ApiResponse
+    public function get(string $endpoint, array $expectedStatuses = []): ApiResponse
     {
-        return $this->request('GET', $endpoint, null);
+        return $this->request('GET', $endpoint, null, $expectedStatuses);
     }
 
     /**
@@ -84,10 +88,11 @@ final class ApiClient
 
     /**
      * @param  array<string, mixed>|null  $payload
+     * @param  list<int>                  $expectedStatuses
      *
      * @throws ApiException
      */
-    private function request(string $method, string $endpoint, ?array $payload): ApiResponse
+    private function request(string $method, string $endpoint, ?array $payload, array $expectedStatuses = []): ApiResponse
     {
         $this->config->assertComplete();
 
@@ -143,10 +148,16 @@ final class ApiClient
         $apiResponse = ApiResponse::fromDecoded($status, $decoded);
 
         if (!$apiResponse->isSuccessful()) {
-            $this->logger->error('P24 odrzuciło żądanie', [
+            $kontekst = [
                 'endpoint' => $endpoint,
                 'opis'     => $apiResponse->describe(),
-            ]);
+            ];
+
+            if (\in_array($status, $expectedStatuses, true)) {
+                $this->logger->info('P24 odpowiedziało odmownie, czego się spodziewaliśmy', $kontekst);
+            } else {
+                $this->logger->error('P24 odrzuciło żądanie', $kontekst);
+            }
 
             throw new ApiException(
                 $apiResponse->errorMessage ?? ('P24 zwróciło HTTP ' . $status),

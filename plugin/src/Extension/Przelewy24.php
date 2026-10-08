@@ -66,7 +66,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
     /**
      * Wersja wtyczki, wysyłana do P24 w nagłówku diagnostycznym.
      */
-    public const VERSION = '1.0.7';
+    public const VERSION = '1.0.8';
 
     protected $autoloadLanguage = true;
 
@@ -147,6 +147,23 @@ class Przelewy24 extends \hikashopPaymentPlugin
      * @var string
      */
     public $p24_retry_url = '';
+
+    /**
+     * Informacja dla klienta, że za zamówienie już zapłacono.
+     *
+     * To nie jest błąd, więc ma w widoku osobne miejsce: klient, który
+     * zapłacił, nie powinien czytać „nie udało się rozpocząć płatności”.
+     *
+     * @var string
+     */
+    public $p24_paid_notice = '';
+
+    /** Wyniki sprawdzenia w P24, czy za zamówienie już zapłacono. */
+    protected const P24_UNPAID    = 'unpaid';
+    protected const P24_CONFIRMED = 'confirmed';
+    protected const P24_PENDING   = 'pending';
+    protected const P24_MISMATCH  = 'mismatch';
+    protected const P24_REFUNDED  = 'refunded';
 
     /**
      * Wartości domyślne przy zakładaniu metody płatności.
@@ -256,7 +273,9 @@ class Przelewy24 extends \hikashopPaymentPlugin
      * Rejestruje transakcję w P24 i przygotowuje adres strony płatności.
      *
      * Wspólne dla złożenia zamówienia i ponowienia zapłaty. Przy błędzie
-     * ustawia komunikat dla klienta w p24_error i zwraca null.
+     * ustawia komunikat dla klienta w p24_error i zwraca null. Null zwraca
+     * też wtedy, gdy za zamówienie już zapłacono: informacja dla klienta
+     * trafia wówczas do p24_paid_notice.
      *
      * @return ApiClient|null  klient API gotowy do dalszych wywołań albo null
      */
@@ -273,17 +292,46 @@ class Przelewy24 extends \hikashopPaymentPlugin
                 throw new ConfigurationException('Kwota zamówienia jest zerowa lub ujemna');
             }
 
+            // Stan zamówienia czytamy z bazy, nie z obiektu, który dostaliśmy:
+            // kasa podaje zamówienie bez danych transakcji, a o tym, czy już
+            // zapłacono, decyduje to, co zapisane.
+            $zapisane = $this->getOrder((int) $order->order_id);
+            $stan     = \is_object($zapisane) ? $zapisane : $order;
+
             // Zamówienie opłacone nie może być opłacone po raz drugi.
             // Bez tej blokady klient, który wróci do kasy, zakłada w P24
             // kolejną transakcję i płaci drugi raz za to samo.
-            if ($this->isAlreadyPaid($order, $config)) {
+            if ($this->isAlreadyPaid($stan, $config)) {
                 $logger->warning('Próba ponownej zapłaty za opłacone zamówienie', [
                     'order_id' => $order->order_id,
-                    'status'   => $order->order_status ?? '',
+                    'status'   => $stan->order_status ?? '',
                 ]);
 
-                $this->p24_error     = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_ALREADY_PAID');
+                $this->p24_paid_notice = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_ALREADY_PAID');
+                $this->p24_retry_url   = '';
+
+                return null;
+            }
+
+            $client  = $this->buildClient($config, $logger);
+            $service = new TransactionService($client, $config, $logger);
+
+            // Powiadomienie o zapłacie potrafi nie dotrzeć: awaria, zapora,
+            // sklep bez adresu widocznego z internetu. Klient widzi wtedy
+            // zamówienie jako nieopłacone i chce zapłacić jeszcze raz. Zanim
+            // wyślemy go do bramki, pytamy P24 o transakcję tego zamówienia.
+            // Opłaconą potwierdzamy od razu, tak samo jak po powiadomieniu.
+            $wP24 = $this->settleIfPaidInP24($stan, $config, $logger, $service, $amount, $currencyCode);
+
+            if ($wP24 !== self::P24_UNPAID) {
                 $this->p24_retry_url = '';
+
+                match ($wP24) {
+                    self::P24_CONFIRMED => $this->p24_paid_notice = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_PAID_CONFIRMED'),
+                    self::P24_PENDING   => $this->p24_paid_notice = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_PAID_PENDING'),
+                    self::P24_MISMATCH  => $this->p24_error = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_PAID_MISMATCH'),
+                    default             => $this->p24_error = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_RETRY_UNAVAILABLE'),
+                };
 
                 return null;
             }
@@ -310,7 +358,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
             // Jeden identyfikator sesji na zamówienie, nie na próbę.
             // Ponowienie zapłaty ma prowadzić do TEJ SAMEJ transakcji
             // w P24, inaczej klient może zapłacić dwa razy.
-            $sessionId = OrderPaymentData::sessionIdFor($order, (int) $order->order_id);
+            $sessionId = OrderPaymentData::sessionIdFor($stan, (int) $order->order_id);
 
             // Zapisujemy próbę PRZED wysłaniem rejestracji. Gdyby P24
             // zdążyło przysłać powiadomienie, zanim wrócimy z odpowiedzią,
@@ -320,11 +368,8 @@ class Przelewy24 extends \hikashopPaymentPlugin
                 $sessionId,
                 $amount,
                 $currencyCode,
-                OrderPaymentData::getInt($order, OrderPaymentData::ATTEMPTS)
+                OrderPaymentData::getInt($stan, OrderPaymentData::ATTEMPTS)
             );
-
-            $client  = $this->buildClient($config, $logger);
-            $service = new TransactionService($client, $config, $logger);
 
             $token = $service->register(new RegisterRequest(
                 sessionId: $sessionId,
@@ -514,57 +559,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
                 return false;
             }
 
-            OrderPaymentData::store($orderId, [
-                OrderPaymentData::VERIFIED_AT => gmdate('c'),
-            ]);
-
-            // Zamówienie mogło dostać status opłaconego wcześniej, na
-            // przykład ręcznie od sprzedawcy, albo pójść już dalej, do
-            // wysyłki. Zapłatę trzeba było zweryfikować tak czy inaczej,
-            // ale statusu nie cofamy i klienta drugi raz nie zawiadamiamy.
-            $aktualne = $this->getOrder($orderId);
-
-            if ($this->hasPaidStatus($aktualne, $config)) {
-                $logger->info('Zapłata zweryfikowana, status zamówienia zostaje bez zmian', [
-                    'order_id' => $orderId,
-                    'status'   => (string) ($aktualne->order_status ?? ''),
-                ]);
-
-                return true;
-            }
-
-            // Zmiana statusu wysyła też powiadomienie do klienta. Gdyby
-            // wysyłka się wywróciła, zapłata i tak jest zaksięgowana,
-            // więc nie wolno odpowiedzieć P24, że obsługa się nie udała.
-            // Inaczej bramka ponawia powiadomienie bez potrzeby.
-            try {
-                $this->modifyOrder($orderId, $config->verifiedStatus, true, true);
-            } catch (Throwable $exception) {
-                $logger->error('Błąd przy zmianie statusu zamówienia', [
-                    'order_id' => $orderId,
-                    'powod'    => $exception->getMessage(),
-                ]);
-            }
-
-            // O powodzeniu decyduje stan zamówienia w bazie, nie to,
-            // czy wszystkie czynności poboczne przeszły bez potknięcia.
-            $paid = $this->hasPaidStatus($this->getOrder($orderId), $config);
-
-            if (!$paid) {
-                $logger->error('Zapłata potwierdzona, ale status zamówienia się nie zmienił', [
-                    'order_id' => $orderId,
-                    'oczekiwany_status' => $config->verifiedStatus,
-                ]);
-
-                return false;
-            }
-
-            $logger->info('Zamówienie oznaczone jako opłacone', [
-                'order_id' => $orderId,
-                'status'   => $config->verifiedStatus,
-            ]);
-
-            return true;
+            return $this->markVerified($orderId, $config, $logger);
         } catch (SignatureException $exception) {
             // Niezgodność podpisu, sesji, kwoty lub waluty. Zamówienia
             // nie wolno wtedy ruszyć.
@@ -888,6 +883,184 @@ class Przelewy24 extends \hikashopPaymentPlugin
                 'powod'    => $blad->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * Zapisuje potwierdzoną zapłatę i nadaje zamówieniu status opłaconego.
+     *
+     * Wspólne dla obu dróg, którymi dowiadujemy się o zapłacie: powiadomienia
+     * z P24 i własnego pytania do P24, gdy powiadomienie nie dotarło. Wołać
+     * wyłącznie po udanym transaction/verify.
+     *
+     * @param  array<string, mixed>  $dane  dodatkowe dane transakcji do zapisania
+     *
+     * @return bool  czy zamówienie jest w statusie opłaconego
+     */
+    protected function markVerified($orderId, Config $config, Logger $logger, array $dane = [])
+    {
+        $orderId = (int) $orderId;
+
+        // Powiadomienie i klient wracający z bramki potrafią trafić do sklepu
+        // w tej samej chwili. Kto przyszedł drugi, ten niczego nie powtarza:
+        // ani zmiany statusu, ani e-maila do klienta.
+        $przed = $this->getOrder($orderId);
+
+        if (\is_object($przed) && OrderPaymentData::getString($przed, OrderPaymentData::VERIFIED_AT) !== '') {
+            $logger->info('Zapłata została już potwierdzona przez równoległe żądanie', ['order_id' => $orderId]);
+
+            return $this->hasPaidStatus($przed, $config);
+        }
+
+        OrderPaymentData::store($orderId, $dane + [
+            OrderPaymentData::VERIFIED_AT => gmdate('c'),
+        ]);
+
+        // Zamówienie mogło dostać status opłaconego wcześniej, na
+        // przykład ręcznie od sprzedawcy, albo pójść już dalej, do
+        // wysyłki. Zapłatę trzeba było zweryfikować tak czy inaczej,
+        // ale statusu nie cofamy i klienta drugi raz nie zawiadamiamy.
+        $aktualne = $this->getOrder($orderId);
+
+        if ($this->hasPaidStatus($aktualne, $config)) {
+            $logger->info('Zapłata zweryfikowana, status zamówienia zostaje bez zmian', [
+                'order_id' => $orderId,
+                'status'   => (string) ($aktualne->order_status ?? ''),
+            ]);
+
+            return true;
+        }
+
+        // Zmiana statusu wysyła też powiadomienie do klienta. Gdyby
+        // wysyłka się wywróciła, zapłata i tak jest zaksięgowana.
+        try {
+            $this->modifyOrder($orderId, $config->verifiedStatus, true, true);
+        } catch (Throwable $exception) {
+            $logger->error('Błąd przy zmianie statusu zamówienia', [
+                'order_id' => $orderId,
+                'powod'    => $exception->getMessage(),
+            ]);
+        }
+
+        // O powodzeniu decyduje stan zamówienia w bazie, nie to,
+        // czy wszystkie czynności poboczne przeszły bez potknięcia.
+        if (!$this->hasPaidStatus($this->getOrder($orderId), $config)) {
+            $logger->error('Zapłata potwierdzona, ale status zamówienia się nie zmienił', [
+                'order_id'          => $orderId,
+                'oczekiwany_status' => $config->verifiedStatus,
+            ]);
+
+            return false;
+        }
+
+        $logger->info('Zamówienie oznaczone jako opłacone', [
+            'order_id' => $orderId,
+            'status'   => $config->verifiedStatus,
+        ]);
+
+        return true;
+    }
+
+    /**
+     * Pyta P24, czy za zamówienie już zapłacono, i opłacone potwierdza.
+     *
+     * Powiadomienie o zapłacie potrafi nie dotrzeć. Sklep widzi wtedy
+     * zamówienie jako nieopłacone i pokazuje klientowi „Zapłać teraz”, choć
+     * pieniądze są już w P24. Kliknięcie tego przycisku nie może prowadzić
+     * do bramki drugi raz: najpierw pytamy P24 o transakcję zamówienia,
+     * a opłaconą weryfikujemy dokładnie tak, jak po powiadomieniu.
+     *
+     * To nie jest uznawanie zapłaty na słowo przeglądarki. O stan pytamy
+     * P24 z serwera, a status zmienia dopiero udane transaction/verify.
+     *
+     * @param  object  $order           zamówienie odczytane z bazy
+     * @param  int     $expectedAmount  kwota zamówienia w groszach
+     *
+     * @return string  jedna ze stałych P24_*
+     */
+    protected function settleIfPaidInP24($order, Config $config, Logger $logger, TransactionService $service, $expectedAmount, $currencyCode)
+    {
+        $sessionId = \is_object($order) ? OrderPaymentData::getString($order, OrderPaymentData::SESSION_ID) : '';
+
+        // Bez zapisanej sesji nie było jeszcze żadnej próby zapłaty.
+        if ($sessionId === '') {
+            return self::P24_UNPAID;
+        }
+
+        $orderId    = (int) ($order->order_id ?? 0);
+        $transakcja = $service->findBySessionId($sessionId);
+
+        if ($transakcja === null) {
+            return self::P24_UNPAID;
+        }
+
+        $stan = (int) ($transakcja['status'] ?? 0);
+
+        if ($stan === TransactionService::STATE_REFUNDED) {
+            $logger->warning('Wpłata za to zamówienie została w P24 zwrócona, nowej płatności nie zaczynam', [
+                'order_id' => $orderId,
+            ]);
+
+            return self::P24_REFUNDED;
+        }
+
+        if ($stan !== TransactionService::STATE_ADVANCE && $stan !== TransactionService::STATE_PAID) {
+            return self::P24_UNPAID;
+        }
+
+        $p24OrderId = (int) ($transakcja['orderId'] ?? 0);
+        $kwota      = (int) ($transakcja['amount'] ?? 0);
+        $waluta     = (string) ($transakcja['currency'] ?? '');
+
+        if ($p24OrderId <= 0
+            || !Amount::equals((int) $expectedAmount, $kwota)
+            || strcasecmp($waluta, (string) $currencyCode) !== 0
+        ) {
+            $logger->error('W P24 jest wpłata za to zamówienie, ale w innej kwocie lub walucie niż zamówienie', [
+                'order_id'      => $orderId,
+                'p24_order'     => $p24OrderId,
+                'wplata_gr'     => $kwota,
+                'zamowienie_gr' => (int) $expectedAmount,
+                'waluta_p24'    => $waluta,
+            ]);
+
+            return self::P24_MISMATCH;
+        }
+
+        $logger->info('P24 ma już wpłatę za to zamówienie, weryfikuję ją bez czekania na powiadomienie', [
+            'order_id'  => $orderId,
+            'p24_order' => $p24OrderId,
+            'stan_p24'  => $stan,
+        ]);
+
+        try {
+            $verified = $service->verify($sessionId, $p24OrderId, (int) $expectedAmount, (string) $currencyCode);
+        } catch (ApiException $exception) {
+            $logger->error('Weryfikacja wpłaty znalezionej w P24 nie powiodła się', [
+                'order_id' => $orderId,
+                'http'     => $exception->getHttpStatus(),
+                'powod'    => $exception->getMessage(),
+            ]);
+
+            // Klient zapłacił, więc do bramki go nie wysyłamy. Sprzedawca
+            // dostaje wiadomość, tak samo jak przy nieudanej weryfikacji
+            // po powiadomieniu.
+            $this->alertMerchant($orderId, $order, $exception, $logger);
+
+            return self::P24_PENDING;
+        }
+
+        if (!$verified) {
+            $logger->error('P24 nie potwierdziło wpłaty znalezionej dla zamówienia', ['order_id' => $orderId]);
+
+            return self::P24_PENDING;
+        }
+
+        $this->markVerified($orderId, $config, $logger, [
+            OrderPaymentData::P24_ORDER_ID => $p24OrderId,
+            OrderPaymentData::METHOD_ID    => (int) ($transakcja['paymentMethod'] ?? 0),
+        ]);
+
+        return self::P24_CONFIRMED;
     }
 
     /**

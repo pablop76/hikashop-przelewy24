@@ -230,6 +230,31 @@ odgadnięciem, w odróżnieniu od gołego numeru zamówienia.
 Dodatkowo zamówienie w statusie opłaconego nie pozwala rozpocząć płatności
 od nowa.
 
+**Przed startem płatności pytamy P24, czy za zamówienie już nie zapłacono.**
+Jeden identyfikator sesji nie wystarcza, gdy powiadomienie nie dotrze wcale:
+sklep ma wtedy zamówienie nieopłacone i pokazuje „Zapłać teraz”, choć pieniądze
+są już w P24. Do 1.0.7 kliknięcie rejestrowało transakcję jeszcze raz i wysyłało
+klienta do bramki.
+
+Od 1.0.8 każde ponowne rozpoczęcie płatności, z przycisku wtyczki i z „Zapłać
+teraz” HikaShopa, zaczyna się od `transaction/by/sessionId`. Jeżeli P24 ma
+wpłatę (stan 1 albo 2) w kwocie i walucie zamówienia, wtyczka od razu robi
+`transaction/verify` i potwierdza zamówienie tak samo jak po powiadomieniu.
+Klient zamiast bramki widzi informację, że za zamówienie już zapłacono.
+Pozostałe przypadki:
+
+- weryfikacja kończy się błędem: status zostaje, klient czyta, że wpłata jest
+  odnotowana i żeby nie płacił ponownie, a sprzedawca dostaje jedną wiadomość
+- wpłata w innej kwocie albo walucie niż zamówienie: bez weryfikacji i bez
+  nowej płatności, klient ma się skontaktować ze sklepem
+- wpłata zwrócona w P24 (stan 3): nowej płatności nie zaczynamy
+- P24 nie zna transakcji albo nie odpowiada: zwykła rejestracja, jak dotąd
+
+Pierwsze złożenie zamówienia nie kosztuje dodatkowego pytania, bo zamówienie
+nie ma jeszcze zapisanej sesji. To nadal nie jest uznawanie zapłaty na słowo
+przeglądarki: o stan pytamy P24 z serwera, a status zmienia dopiero udane
+`transaction/verify`.
+
 **Ponowienie zapłaty bez płatnego HikaShopa.** Gdy płatność nie ruszy,
 klient widzi przycisk „Spróbuj zapłacić ponownie”. Do wersji 1.0.3 prowadził
 do kasy, a ta po złożeniu zamówienia jest pusta. Własne „zapłać teraz”
@@ -401,7 +426,7 @@ php tests/joomla.php       # wtyczka w zainstalowanej Joomli z HikaShopem
 php tests/notification.php # sciezka powiadomienia, siec podstawiona atrapa
 php tests/blik.php         # BLIK w kasie, siec podstawiona atrapa
 php tests/duplikaty.php    # czy ponowienie nie dubluje transakcji, zywe P24
-php tests/retry.php        # przycisk ponowienia zaplaty, siec podstawiona atrapa
+php tests/retry.php        # ponowienie zaplaty i wplata, o ktorej sklep nie wie, siec podstawiona atrapa
 php tests/email.php        # adres e-mail klienta, takze goscia
 ```
 

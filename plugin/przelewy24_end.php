@@ -27,6 +27,7 @@ $errorText  = (string) $this->p24_error;
 $retryUrl   = (string) $this->p24_retry_url;
 $blikPending = (bool) $this->p24_blik_pending;
 $blikError   = (string) $this->p24_blik_error;
+$paidNotice  = (string) ($this->p24_paid_notice ?? '');
 
 $escape = static fn ($value): string => htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 ?>
@@ -44,6 +45,15 @@ $escape = static fn ($value): string => htmlspecialchars((string) $value, ENT_QU
     // Zapłatę potwierdza powiadomienie wysłane przez P24 na serwer,
     // a nie cokolwiek, co dzieje się w przeglądarce klienta.
     ?>
+<?php elseif ($paidNotice !== '') : ?>
+    <?php
+    // Za zamówienie już zapłacono: bez przycisku płatności i bez nagłówka
+    // o błędzie. Klient, który zapłacił, ma przeczytać, że wszystko gra.
+    ?>
+    <div class="hikashop_przelewy24_paid">
+        <h2><?php echo $escape(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_PAID_TITLE')); ?></h2>
+        <p><?php echo $escape($paidNotice); ?></p>
+    </div>
 <?php elseif ($errorText !== '') : ?>
     <div class="hikashop_przelewy24_error">
         <h2><?php echo $escape(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_PAYMENT_NOT_STARTED')); ?></h2>

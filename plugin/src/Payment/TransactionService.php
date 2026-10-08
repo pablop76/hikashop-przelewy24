@@ -112,11 +112,18 @@ final class TransactionService
         return $verified;
     }
 
+    /** Stany transakcji zwracane przez transaction/by/sessionId. */
+    public const STATE_ADVANCE  = 1;   // wpłata przyjęta, czeka na weryfikację przez sklep
+    public const STATE_PAID     = 2;   // wpłata zweryfikowana
+    public const STATE_REFUNDED = 3;   // wpłata zwrócona
+
     /**
      * Pyta P24 o stan transakcji po identyfikatorze sesji.
      *
      * Przydaje się, gdy klient wraca do sklepu, a powiadomienie jeszcze
      * nie dotarło: zamiast zgadywać ze strony powrotu, pytamy wprost.
+     * Dla transakcji zarejestrowanej, ale nieopłaconej, P24 odpowiada 404,
+     * więc ten kod jest tu zwykłą odpowiedzią, nie błędem.
      *
      * @return array<string, mixed>|null  dane transakcji albo null, gdy P24 jej nie zna
      */
@@ -124,7 +131,8 @@ final class TransactionService
     {
         try {
             $response = $this->client->get(
-                Endpoints::build(Endpoints::TRANSACTION_BY_SESSION_ID, ['sessionId' => $sessionId])
+                Endpoints::build(Endpoints::TRANSACTION_BY_SESSION_ID, ['sessionId' => $sessionId]),
+                [404]
             );
         } catch (ApiException $exception) {
             // Nieznana sesja to zwykła sytuacja: klient mógł przerwać
