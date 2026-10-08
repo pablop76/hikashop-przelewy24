@@ -93,6 +93,30 @@ final class WtyczkaTestowa extends Przelewy24
 
     public ?TransportAtrapa $transport = null;
 
+    /** @var list<mixed> wiadomosci, ktore wtyczka chciala wyslac sprzedawcy */
+    public array $alerty = [];
+
+    /** @var list<string> statusy, na ktore wtyczka przestawiala zamowienie */
+    public array $zmianyStatusu = [];
+
+    /**
+     * Falsz w miejscu numeru zamowienia to prosba o sama wiadomosc do
+     * sprzedawcy, bez zapisu zamowienia. W tescie jej nie wysylamy, tylko
+     * odkladamy, zeby dalo sie policzyc, ile ich bylo i co zawieraly.
+     */
+    public function modifyOrder(&$order_id, $order_status, $history = null, $email = null, $payment_params = null)
+    {
+        if ($order_id === false) {
+            $this->alerty[] = $email;
+
+            return;
+        }
+
+        $this->zmianyStatusu[] = (string) $order_status;
+
+        parent::modifyOrder($order_id, $order_status, $history, $email, $payment_params);
+    }
+
     protected function readNotificationBody()
     {
         return $this->trescPowiadomienia;
@@ -136,6 +160,17 @@ $kwotaGrosze = 1150;
 $sessionId   = SessionId::generate(999999);
 $orderToken  = bin2hex(random_bytes(16));
 $p24OrderId  = 555000111;
+$numerZamowienia = 'P24TEST' . random_int(1000, 9999);
+
+/**
+ * Dane transakcji zapisane przy zamowieniu przed zaplata.
+ */
+$parametryPrzedZaplata = [
+    OrderPaymentData::SESSION_ID => $sessionId,
+    OrderPaymentData::AMOUNT     => $kwotaGrosze,
+    OrderPaymentData::CURRENCY   => 'PLN',
+    OrderPaymentData::ATTEMPTS   => 1,
+];
 
 $pdo->prepare("
     INSERT INTO {$prefix}hikashop_order
@@ -147,17 +182,12 @@ $pdo->prepare("
          :cena, 125, :platnosc, 'przelewy24',
          :token, :parametry)
 ")->execute([
-    ':numer'     => 'P24TEST' . random_int(1000, 9999),
+    ':numer'     => $numerZamowienia,
     ':utworzone' => time(),
     ':cena'      => $kwotaZl,
     ':platnosc'  => $metoda['payment_id'],
     ':token'     => $orderToken,
-    ':parametry' => serialize((object) [
-        OrderPaymentData::SESSION_ID => $sessionId,
-        OrderPaymentData::AMOUNT     => $kwotaGrosze,
-        OrderPaymentData::CURRENCY   => 'PLN',
-        OrderPaymentData::ATTEMPTS   => 1,
-    ]),
+    ':parametry' => serialize((object) $parametryPrzedZaplata),
 ]);
 
 $orderId = (int) $pdo->lastInsertId();
@@ -213,7 +243,7 @@ $powiadomienie = static function (array $nadpisania = []) use ($config, $session
 /**
  * Uruchamia obsluge powiadomienia i zwraca status zamowienia po niej.
  *
- * @return array{wynik: mixed, status: string, wywolan: int}
+ * @return array{wynik: mixed, status: string, wywolan: int, alertow: int, alert: mixed, zmian: list<string>}
  */
 $uruchom = static function (string $tresc, string $tokenWUrl, ?TransportAtrapa $wlasnaAtrapa = null) use ($orderId, $pdo, $prefix): array {
     $atrapa = $wlasnaAtrapa ?? new TransportAtrapa();
@@ -224,7 +254,7 @@ $uruchom = static function (string $tresc, string $tokenWUrl, ?TransportAtrapa $
     $wtyczka->trescPowiadomienia = $tresc;
     $wtyczka->transport          = $atrapa;
 
-    $wejscie = Joomla\CMS\Factory::getApplication()->input;
+    $wejscie = Joomla\CMS\Factory::getApplication()->getInput();
     $wejscie->set('order_id', $orderId);
     $wejscie->set('order_token', $tokenWUrl);
 
@@ -238,7 +268,35 @@ $uruchom = static function (string $tresc, string $tokenWUrl, ?TransportAtrapa $
         'wynik'   => $wynik,
         'status'  => (string) $q->fetchColumn(),
         'wywolan' => count($atrapa->wywolania),
+        'alertow' => count($wtyczka->alerty),
+        'alert'   => $wtyczka->alerty[0] ?? null,
+        'zmian'   => $wtyczka->zmianyStatusu,
     ];
+};
+
+/**
+ * Parametry platnosci zapisane teraz przy zamowieniu.
+ */
+$zapisaneParametry = static function () use ($pdo, $prefix, $orderId): object {
+    $q = $pdo->prepare("SELECT order_payment_params FROM {$prefix}hikashop_order WHERE order_id = :id");
+    $q->execute([':id' => $orderId]);
+
+    return (object) (array) @unserialize((string) $q->fetchColumn());
+};
+
+/**
+ * Przywraca zamowienie do stanu sprzed zaplaty: status oraz dane
+ * transakcji, czyli takze znaczniki weryfikacji i wyslanej wiadomosci.
+ *
+ * @param  array<string, mixed>  $dodatkowe  pola dopisane do danych transakcji
+ */
+$zresetuj = static function (string $status = 'created', array $dodatkowe = []) use ($pdo, $prefix, $orderId, $parametryPrzedZaplata): void {
+    $pdo->prepare("UPDATE {$prefix}hikashop_order SET order_status = :status, order_payment_params = :parametry WHERE order_id = :id")
+        ->execute([
+            ':status'    => $status,
+            ':parametry' => serialize((object) ($dodatkowe + $parametryPrzedZaplata)),
+            ':id'        => $orderId,
+        ]);
 };
 
 $tokenPoprawny = md5($orderToken);
@@ -310,35 +368,106 @@ $q = $pdo->prepare("SELECT COUNT(*) FROM {$prefix}hikashop_history WHERE history
 $q->execute([':id' => $orderId]);
 echo '       (wpisow w historii lacznie: ' . (int) $q->fetchColumn() . ')' . PHP_EOL;
 
-echo PHP_EOL . '4. Status po nieudanej weryfikacji' . PHP_EOL;
+echo PHP_EOL . '4. Blad weryfikacji nie zmienia statusu zamowienia' . PHP_EOL;
 
-// Zamowienie jest juz oplacone po sekcji 2. Nieudana weryfikacja NIE MOZE
-// go z tego statusu scofnac, bo status anulowania w HikaShopie potrafi
-// zwrocic towar na stan.
+// P24 wysyla powiadomienia tylko dla transakcji oplaconych. Blad weryfikacji
+// po poprawnie podpisanym powiadomieniu to wiec klopot po naszej stronie albo
+// po stronie P24 (klucz, adres IP, awaria), a klient zaplacil. Do 1.0.6 taka
+// odpowiedz nadawala zamowieniu status nieudanej platnosci.
+
+// Zamowienie jest zweryfikowane po sekcji 2: kolejne powiadomienie niczego
+// nie rusza, niezaleznie od tego, co odpowiedzialoby P24.
 $r = $uruchom($powiadomienie(), $tokenPoprawny, new TransportAtrapa(400, '{"error":"Error call 2","code":400}'));
-wynik('oplaconego zamowienia nie cofamy', $r['status'] === $config->verifiedStatus, $r['status']);
-
-/**
- * Przywraca zamowienie do stanu sprzed zaplaty.
- */
-$zresetuj = static function () use ($pdo, $prefix, $orderId): void {
-    $pdo->prepare("UPDATE {$prefix}hikashop_order SET order_status = 'created' WHERE order_id = :id")
-        ->execute([':id' => $orderId]);
-};
+wynik('zweryfikowanego zamowienia nie ruszamy', $r['status'] === $config->verifiedStatus, $r['status']);
+wynik('i w ogole nie pytamy o nie P24', $r['wywolan'] === 0);
 
 $zresetuj();
 $r = $uruchom($powiadomienie(), $tokenPoprawny, new TransportAtrapa(400, '{"error":"Error call 2","code":400}'));
-wynik('definitywna odmowa P24 nadaje status nieudanej platnosci', $r['status'] === $config->invalidStatus, $r['status']);
+wynik('odpowiedz HTTP 400 NIE zmienia statusu', $r['status'] === 'created', $r['status']);
+wynik('weryfikacja zostala wykonana', $r['wywolan'] === 1);
+wynik('obsluga konczy sie niepowodzeniem', $r['wynik'] === false);
+wynik('sprzedawca dostaje jedna wiadomosc', $r['alertow'] === 1, $r['alertow'] . ' wiadomosci');
 
-// Zerwane polaczenie albo sieczka zamiast odpowiedzi to NIE odmowa:
-// transakcja mogla zostac oplacona, a tylko odpowiedz do nas nie dotarla.
+$temat = is_object($r['alert']) ? (string) ($r['alert']->subject ?? '') : '';
+$tresc = is_object($r['alert']) ? (string) ($r['alert']->body ?? '') : '';
+
+wynik('temat wymienia numer zamowienia', str_contains($temat, $numerZamowienia), $temat);
+wynik('tresc podaje odpowiedz P24', str_contains($tresc, 'HTTP 400') && str_contains($tresc, 'Error call 2'));
+wynik('tresc podaje identyfikator sesji do odszukania w panelu P24', str_contains($tresc, $sessionId));
+wynik('w wiadomosci nie ma klucza CRC ani klucza API', !str_contains($tresc, $config->crc) && !str_contains($tresc, $config->apiKey));
+wynik('tlumaczenia wiadomosci sa wczytane', !str_contains($temat . $tresc, 'PLG_HIKASHOPPAYMENT'), $temat);
+wynik('przy zamowieniu zapisano, ze wiadomosc poszla', !empty($zapisaneParametry()->{OrderPaymentData::VERIFY_ALERT_AT}));
+wynik('nieudana weryfikacja nie udaje potwierdzonej', empty($zapisaneParametry()->{OrderPaymentData::VERIFIED_AT}));
+
+// P24 ponawia powiadomienie przez kilka godzin. Kazde powtorzenie probuje
+// weryfikacji od nowa, ale sprzedawca nie dostaje kolejnych wiadomosci.
+$r = $uruchom($powiadomienie(), $tokenPoprawny, new TransportAtrapa(400, '{"error":"Error call 2","code":400}'));
+wynik('ponowione powiadomienie znow probuje weryfikacji', $r['wywolan'] === 1);
+wynik('ale nie wysyla drugiej wiadomosci', $r['alertow'] === 0, $r['alertow'] . ' wiadomosci');
+wynik('status nadal niezmieniony', $r['status'] === 'created', $r['status']);
+
+// Gdy przyczyna zniknie, to samo zamowienie potwierdza sie normalnie.
+$r = $uruchom($powiadomienie(), $tokenPoprawny);
+wynik('po usunieciu przyczyny kolejne powiadomienie potwierdza zaplate', $r['status'] === $config->verifiedStatus, $r['status']);
+
+$zresetuj();
+$r = $uruchom($powiadomienie(), $tokenPoprawny, new TransportAtrapa(401, '{"error":"Incorrect authentication","code":401}'));
+wynik('odrzucone dane dostepowe (401) NIE zmieniaja statusu', $r['status'] === 'created', $r['status']);
+wynik('sprzedawca dostaje wiadomosc', $r['alertow'] === 1);
+
+$zresetuj();
+$r = $uruchom($powiadomienie(), $tokenPoprawny, new TransportAtrapa(500, '{"error":"Internal Server Error","code":500}'));
+wynik('awaria P24 (500) NIE zmienia statusu', $r['status'] === 'created', $r['status']);
+
+// Zerwane polaczenie albo sieczka zamiast odpowiedzi to takze nie odmowa.
 $zresetuj();
 $r = $uruchom($powiadomienie(), $tokenPoprawny, new TransportAtrapa(200, 'to nie jest JSON'));
 wynik('niepoprawna odpowiedz NIE zmienia statusu', $r['status'] === 'created', $r['status']);
 
+// Jedyna jawna odmowa: P24 odpowiada poprawnie, ale statusem innym niz success.
 $zresetuj();
 $r = $uruchom($powiadomienie(), $tokenPoprawny, new TransportAtrapa(200, '{"data":{"status":"rejected"}}'));
 wynik('odpowiedz inna niz success nadaje status nieudanej platnosci', $r['status'] === $config->invalidStatus, $r['status']);
+wynik('jawna odmowa nie jest powodem do wiadomosci o awarii', $r['alertow'] === 0);
+
+echo PHP_EOL . '5. Zamowienie, ktore ma juz status oplaconego' . PHP_EOL;
+
+// Sprzedawca potrafi potwierdzic zamowienie recznie, zanim dojdzie
+// powiadomienie. P24 rozlicza wplate dopiero po transaction/verify, wiec
+// weryfikacje trzeba wykonac mimo statusu. Do 1.0.6 byla pomijana.
+$zresetuj($config->verifiedStatus);
+$r = $uruchom($powiadomienie(), $tokenPoprawny);
+wynik('zaplata jest weryfikowana mimo statusu oplaconego', $r['wywolan'] === 1);
+wynik('status zostaje, jaki byl', $r['status'] === $config->verifiedStatus, $r['status']);
+wynik('wtyczka nie przestawia statusu drugi raz', $r['zmian'] === [], implode(',', $r['zmian']));
+wynik('zapisano chwile potwierdzenia', !empty($zapisaneParametry()->{OrderPaymentData::VERIFIED_AT}));
+wynik('powiadomienie przyjete', $r['wynik'] === true);
+
+// Zamowienie poszlo juz do wysylki. Cofniecie go do statusu potwierdzenia
+// wyslaloby klientowi drugi e-mail i mieszalo w historii.
+$zresetuj('shipped');
+$r = $uruchom($powiadomienie(), $tokenPoprawny);
+wynik('zamowienie wyslane: weryfikacja wykonana', $r['wywolan'] === 1);
+wynik('zamowienie wyslane nie cofa sie do potwierdzonego', $r['status'] === 'shipped', $r['status']);
+wynik('wtyczka nie zmienia jego statusu', $r['zmian'] === [], implode(',', $r['zmian']));
+
+// Jawna odmowa P24 tez nie moze cofnac zamowienia wyslanego.
+$zresetuj('shipped');
+$r = $uruchom($powiadomienie(), $tokenPoprawny, new TransportAtrapa(200, '{"data":{"status":"rejected"}}'));
+wynik('zamowienia wyslanego nie przestawiamy na nieudana platnosc', $r['status'] === 'shipped', $r['status']);
+
+echo PHP_EOL . '6. Druga transakcja dla zweryfikowanego zamowienia' . PHP_EOL;
+
+// Gdyby klient zaplacil za to samo zamowienie drugi raz, drugiej wplaty
+// nie weryfikujemy: niezweryfikowana zostaje w P24 do dyspozycji klienta.
+$zresetuj($config->verifiedStatus, [
+    OrderPaymentData::P24_ORDER_ID => $p24OrderId,
+    OrderPaymentData::VERIFIED_AT  => gmdate('c'),
+]);
+$r = $uruchom($powiadomienie(['orderId' => $p24OrderId + 1]), $tokenPoprawny);
+wynik('druga transakcja nie jest weryfikowana', $r['wywolan'] === 0);
+wynik('status bez zmian', $r['status'] === $config->verifiedStatus, $r['status']);
+wynik('przy zamowieniu zostaje pierwsza transakcja', (int) ($zapisaneParametry()->{OrderPaymentData::P24_ORDER_ID} ?? 0) === $p24OrderId);
 
 echo PHP_EOL . str_repeat('-', 60) . PHP_EOL;
 echo 'Zdane: ' . $zdane . ', niezdane: ' . $bledy . PHP_EOL;

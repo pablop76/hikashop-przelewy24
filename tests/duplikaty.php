@@ -131,6 +131,26 @@ wynik('zamowienie w statusie oplaconego jest rozpoznane', true, $refleksja->invo
 wynik('zamowienie oczekujace nie jest uznane za oplacone', false, $refleksja->invoke($wtyczka, $nieoplacone, $config));
 wynik('brak statusu nie jest uznany za oplacone', false, $refleksja->invoke($wtyczka, $bezStatusu, $config));
 
+// Do 1.0.6 za oplacone uchodzilo tylko zamowienie w statusie potwierdzenia.
+// Zamowienie wyslane tez jest oplacone, a najpewniejszym dowodem jest nasz
+// wlasny znacznik weryfikacji, niezalezny od tego, jak nazywa sie status.
+$wyslane      = (object) ['order_status' => 'shipped'];
+$anulowane    = (object) ['order_status' => 'cancelled'];
+$zeZnacznikiem = (object) [
+    'order_status'         => 'created',
+    'order_payment_params' => (object) [OrderPaymentData::VERIFIED_AT => gmdate('c')],
+];
+$zPustymZnacznikiem = (object) [
+    'order_status'         => 'created',
+    'order_payment_params' => (object) [OrderPaymentData::VERIFIED_AT => ''],
+];
+
+wynik('zamowienie wyslane jest uznane za oplacone', true, $refleksja->invoke($wtyczka, $wyslane, $config));
+wynik('zamowienie anulowane nie jest uznane za oplacone', false, $refleksja->invoke($wtyczka, $anulowane, $config));
+wynik('znacznik weryfikacji wystarcza, niezaleznie od statusu', true, $refleksja->invoke($wtyczka, $zeZnacznikiem, $config));
+wynik('pusty znacznik niczego nie dowodzi', false, $refleksja->invoke($wtyczka, $zPustymZnacznikiem, $config));
+wynik('brak zamowienia nie wywraca sprawdzenia', false, $refleksja->invoke($wtyczka, null, $config));
+
 echo PHP_EOL . str_repeat('-', 60) . PHP_EOL;
 echo 'Zdane: ' . $zdane . ', niezdane: ' . $bledy . PHP_EOL;
 

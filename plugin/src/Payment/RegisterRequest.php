@@ -22,8 +22,19 @@ final class RegisterRequest
      */
     private const SUPPORTED_LANGUAGES = [
         'bg', 'cs', 'de', 'en', 'es', 'fr', 'hr', 'hu',
-        'it', 'nl', 'pl', 'pt', 'se', 'sk',
+        'it', 'nl', 'pl', 'pt', 'ro', 'se', 'sk',
     ];
+
+    /**
+     * Najdłuższy adres e-mail, jaki przyjmuje P24.
+     *
+     * Limit jest egzekwowany: adres o 51 znakach kończy rejestrację
+     * błędem „Invalid email” (sprawdzone na sandboksie 07.10.2026).
+     * Adresu nie przycinamy, bo przycięty jest już innym adresem
+     * i potwierdzenie zapłaty poszłoby do obcej osoby. Zbyt długi
+     * adres ma zatrzymać wywołujący, zanim odezwie się do P24.
+     */
+    public const EMAIL_MAX_LENGTH = 50;
 
     /**
      * @param  int     $amountInMinorUnits  kwota w groszach
@@ -67,7 +78,7 @@ final class RegisterRequest
             'amount'      => $this->amountInMinorUnits,
             'currency'    => strtoupper($this->currency),
             'description' => self::trimTo($this->description, 1024),
-            'email'       => self::trimTo($this->email, 50),
+            'email'       => trim($this->email),
             'country'     => strtoupper(self::trimTo($this->country, 2)),
             'language'    => self::normaliseLanguage($this->language),
             'urlReturn'   => $this->urlReturn,
@@ -124,6 +135,14 @@ final class RegisterRequest
         }
 
         return $payload;
+    }
+
+    /**
+     * Czy adres e-mail mieści się w limicie P24.
+     */
+    public static function isEmailAccepted(string $email): bool
+    {
+        return mb_strlen(trim($email)) <= self::EMAIL_MAX_LENGTH;
     }
 
     /**

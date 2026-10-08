@@ -162,28 +162,20 @@ $params = $this->element->payment_params ?? new stdClass();
 	</td>
 	<td>
 		<?php echo $this->data['order_statuses']->display('data[payment][payment_params][invalid_status]', $params->invalid_status ?? 'cancelled'); ?>
+		<p class="hikashop_help">
+			<?php echo Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_INVALID_STATUS_HELP'); ?>
+		</p>
 	</td>
 </tr>
 <tr>
 	<td class="key">
-		<label for="data[payment][payment_params][refund_status]">
-			<?php echo Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_REFUND_STATUS'); ?>
+		<label>
+			<?php echo Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_REFUNDS'); ?>
 		</label>
 	</td>
 	<td>
-		<?php
-		// Lista statusów HikaShopa nie ma pustej pozycji. Bez niej
-		// przeglądarka zaznacza pierwszy status i zapis formularza
-		// po cichu włącza zwroty, więc dokładamy ją na początek.
-		$refundSelect = $this->data['order_statuses']->display('data[payment][payment_params][refund_status]', $params->refund_status ?? '');
-		$refundEmpty  = '<option value=""' . (($params->refund_status ?? '') === '' ? ' selected="selected"' : '') . '>'
-			. htmlspecialchars(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_REFUND_STATUS_NONE'), ENT_QUOTES, 'UTF-8') . '</option>';
-		echo preg_replace('/(<select\b[^>]*>)/i', '$1' . $refundEmpty, $refundSelect, 1);
-		?>
 		<p class="hikashop_help">
-			<strong><?php echo Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_REFUND_STATUS_WARNING'); ?></strong>
-			<br />
-			<?php echo Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_REFUND_STATUS_HELP'); ?>
+			<?php echo Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_REFUNDS_HELP'); ?>
 		</p>
 	</td>
 </tr>

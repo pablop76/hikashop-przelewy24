@@ -22,7 +22,6 @@ use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\SignatureExcept
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Logger;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Notification;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\OrderPaymentData;
-use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\RefundService;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\RegisterRequest;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\SessionId;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\TransactionService;
@@ -67,7 +66,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
     /**
      * Wersja wtyczki, wysyłana do P24 w nagłówku diagnostycznym.
      */
-    public const VERSION = '1.0.6';
+    public const VERSION = '1.0.7';
 
     protected $autoloadLanguage = true;
 
@@ -88,10 +87,18 @@ class Przelewy24 extends \hikashopPaymentPlugin
      */
     public $accepted_currencies = ['PLN', 'EUR', 'GBP', 'CZK'];
 
+    /**
+     * Zwrotów wtyczka nie obsługuje i jest to decyzja, nie brak.
+     *
+     * HikaShop nie ma w panelu czynności „zwróć pieniądze”, więc zwrot
+     * dałoby się podpiąć tylko pod zmianę statusu zamówienia. Status
+     * zmienia się rutynowo, także hurtem i przez akcje masowe, a zwrotu
+     * nie da się cofnąć. Zwroty robi się w panelu Przelewy24.
+     */
     public $features = [
         'authorize_capture' => false,
         'recurring'         => false,
-        'refund'            => true,
+        'refund'            => false,
     ];
 
     /**
@@ -160,7 +167,6 @@ class Przelewy24 extends \hikashopPaymentPlugin
         $element->payment_params->payment_method_id = 0;
         $element->payment_params->verified_status = 'confirmed';
         $element->payment_params->invalid_status  = 'cancelled';
-        $element->payment_params->refund_status   = '';
     }
 
     /**
@@ -197,16 +203,6 @@ class Przelewy24 extends \hikashopPaymentPlugin
             $app->enqueueMessage(
                 Text::sprintf('PLG_HIKASHOPPAYMENT_PRZELEWY24_BLIK_LEVEL0_REMINDER', BlikService::SUPPORT_FORM_URL),
                 'notice'
-            );
-        }
-
-        // Włączony wyzwalacz zwrotu oddaje klientom prawdziwe pieniądze
-        // przy zwykłej zmianie statusu zamówienia. Sprzedawca musi o tym
-        // wiedzieć za każdym razem, gdy otwiera tę konfigurację.
-        if ($config->refundStatus !== '') {
-            $app->enqueueMessage(
-                Text::sprintf('PLG_HIKASHOPPAYMENT_PRZELEWY24_REFUND_TRIGGER_ACTIVE', $config->refundStatus),
-                'warning'
             );
         }
     }
@@ -292,6 +288,25 @@ class Przelewy24 extends \hikashopPaymentPlugin
                 return null;
             }
 
+            // P24 odrzuca adresy e-mail dłuższe niż 50 znaków. Przycięty
+            // adres należałby już do kogoś innego, więc płatności nie
+            // zaczynamy i mówimy klientowi wprost, w czym rzecz. Ponowienie
+            // niczego by nie zmieniło, stąd brak przycisku.
+            $email = $this->customerEmail($order);
+
+            if (!RegisterRequest::isEmailAccepted($email)) {
+                $logger->error('Adres e-mail klienta jest dłuższy, niż przyjmuje P24', [
+                    'order_id' => $order->order_id,
+                    'znakow'   => mb_strlen($email),
+                    'limit'    => RegisterRequest::EMAIL_MAX_LENGTH,
+                ]);
+
+                $this->p24_error     = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_ERROR_EMAIL_TOO_LONG');
+                $this->p24_retry_url = '';
+
+                return null;
+            }
+
             // Jeden identyfikator sesji na zamówienie, nie na próbę.
             // Ponowienie zapłaty ma prowadzić do TEJ SAMEJ transakcji
             // w P24, inaczej klient może zapłacić dwa razy.
@@ -319,7 +334,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
                     'PLG_HIKASHOPPAYMENT_PRZELEWY24_ORDER_DESCRIPTION',
                     $order->order_number
                 ),
-                email: $this->customerEmail($order),
+                email: $email,
                 urlReturn: $this->buildReturnUrl($order),
                 urlStatus: $this->buildNotifyUrl($order),
                 country: $this->billingCountry($order),
@@ -388,17 +403,17 @@ class Przelewy24 extends \hikashopPaymentPlugin
      */
     public function onPaymentNotification(&$statuses)
     {
-        $app      = Factory::getApplication();
+        $input = Factory::getApplication()->getInput();
 
         // Ten sam punkt wejścia obsługuje przycisk ponowienia zapłaty.
         // HikaShop w wersji Starter nie ma własnego „zapłać teraz”,
         // a zadanie notify jest dostępne w każdej wersji.
-        if ($app->input->getCmd('p24_action', '') === 'retry') {
+        if ($input->getCmd('p24_action', '') === 'retry') {
             return $this->handleRetry();
         }
 
-        $orderId  = (int) $app->input->get('order_id', 0, 'int');
-        $urlToken = (string) $app->input->get('order_token', '', 'string');
+        $orderId  = (int) $input->get('order_id', 0, 'int');
+        $urlToken = (string) $input->get('order_token', '', 'string');
 
         $dbOrder = $this->getOrder($orderId);
 
@@ -447,11 +462,30 @@ class Przelewy24 extends \hikashopPaymentPlugin
             // przed jakimkolwiek zapisem: bez tego każde powtórzenie
             // ruszałoby stan magazynowy, wysyłało klientowi kolejny e-mail
             // i dokładało wpis do historii zamówienia.
-            if ($this->isAlreadyPaid($dbOrder, $config)) {
-                $logger->info('Powtórzone powiadomienie pominięte, zamówienie już opłacone', [
-                    'order_id' => $orderId,
-                    'status'   => $dbOrder->order_status,
-                ]);
+            //
+            // Miarą jest nasz własny znacznik weryfikacji, a nie status
+            // zamówienia. Status sprzedawca potrafi zmienić ręcznie i sam
+            // z siebie nie mówi, czy P24 dostało od nas transaction/verify.
+            // Bez weryfikacji P24 nie rozlicza wpłaty, więc pominięcie jej
+            // przy ręcznie potwierdzonym zamówieniu kosztowałoby pieniądze.
+            if (OrderPaymentData::getString($dbOrder, OrderPaymentData::VERIFIED_AT) !== '') {
+                $znanaTransakcja = OrderPaymentData::getInt($dbOrder, OrderPaymentData::P24_ORDER_ID);
+
+                if ($znanaTransakcja > 0 && $znanaTransakcja !== $notification->p24OrderId) {
+                    // Druga, osobna wpłata za to samo zamówienie. Nie
+                    // weryfikujemy jej: niezweryfikowana zostaje w P24
+                    // do dyspozycji klienta, czyli do niego wraca.
+                    $logger->warning('Druga transakcja P24 dla zweryfikowanego już zamówienia, nie weryfikuję jej', [
+                        'order_id'          => $orderId,
+                        'p24_order'         => $notification->p24OrderId,
+                        'zweryfikowana_p24' => $znanaTransakcja,
+                    ]);
+                } else {
+                    $logger->info('Powtórzone powiadomienie pominięte, zapłata jest już zweryfikowana', [
+                        'order_id' => $orderId,
+                        'status'   => $dbOrder->order_status,
+                    ]);
+                }
 
                 return true;
             }
@@ -471,6 +505,9 @@ class Przelewy24 extends \hikashopPaymentPlugin
             );
 
             if (!$verified) {
+                // P24 odpowiedziało poprawnie, ale statusem innym niż
+                // „success”. To jedyna jawna odmowa, jaką znamy, i tylko
+                // ona nadaje zamówieniu status nieudanej płatności.
                 $logger->error('Weryfikacja nie potwierdziła zapłaty', ['order_id' => $orderId]);
                 $this->markInvalid($orderId, $config, $logger);
 
@@ -480,6 +517,21 @@ class Przelewy24 extends \hikashopPaymentPlugin
             OrderPaymentData::store($orderId, [
                 OrderPaymentData::VERIFIED_AT => gmdate('c'),
             ]);
+
+            // Zamówienie mogło dostać status opłaconego wcześniej, na
+            // przykład ręcznie od sprzedawcy, albo pójść już dalej, do
+            // wysyłki. Zapłatę trzeba było zweryfikować tak czy inaczej,
+            // ale statusu nie cofamy i klienta drugi raz nie zawiadamiamy.
+            $aktualne = $this->getOrder($orderId);
+
+            if ($this->hasPaidStatus($aktualne, $config)) {
+                $logger->info('Zapłata zweryfikowana, status zamówienia zostaje bez zmian', [
+                    'order_id' => $orderId,
+                    'status'   => (string) ($aktualne->order_status ?? ''),
+                ]);
+
+                return true;
+            }
 
             // Zmiana statusu wysyła też powiadomienie do klienta. Gdyby
             // wysyłka się wywróciła, zapłata i tak jest zaksięgowana,
@@ -496,7 +548,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
 
             // O powodzeniu decyduje stan zamówienia w bazie, nie to,
             // czy wszystkie czynności poboczne przeszły bez potknięcia.
-            $paid = $this->isAlreadyPaid($this->getOrder($orderId), $config);
+            $paid = $this->hasPaidStatus($this->getOrder($orderId), $config);
 
             if (!$paid) {
                 $logger->error('Zapłata potwierdzona, ale status zamówienia się nie zmienił', [
@@ -523,23 +575,23 @@ class Przelewy24 extends \hikashopPaymentPlugin
 
             return false;
         } catch (ApiException $exception) {
-            // P24 zwraca HTTP 400 także wtedy, gdy transakcja po prostu
-            // nie została opłacona. To nie jest awaria sklepu.
             $logger->error('Weryfikacja transakcji nie powiodła się', [
                 'order_id' => $orderId,
                 'http'     => $exception->getHttpStatus(),
                 'powod'    => $exception->getMessage(),
             ]);
 
-            // Status zmieniamy wyłącznie wtedy, gdy P24 JAWNIE odmówiło,
-            // czyli odpowiedziało własnym kodem błędu. Zerwane połączenie,
-            // przekroczony czas albo sieczka zamiast JSON-a są niejawne:
-            // transakcja mogła zostać opłacona, a tylko odpowiedź do nas
-            // nie dotarła. Wtedy zostawiamy status w spokoju i czekamy
-            // na kolejne powiadomienie.
-            if ($exception->getApiCode() !== null) {
-                $this->markInvalid($orderId, $config, $logger);
-            }
+            // Statusu zamówienia tu nie ruszamy, niezależnie od kodu błędu.
+            // P24 wysyła powiadomienia wyłącznie dla transakcji opłaconych,
+            // więc błąd weryfikacji po poprawnie podpisanym powiadomieniu
+            // oznacza kłopot po naszej stronie albo po stronie P24:
+            // nieaktualny klucz, adres IP spoza listy w panelu, awarię,
+            // przekroczony czas. Klient zapłacił. Status nieudanej płatności
+            // odwołałby mu zamówienie i zwrócił towar na stan.
+            //
+            // P24 ponawia powiadomienie przez kilka godzin, a sprzedawca
+            // dostaje jedną wiadomość, żeby zdążył usunąć przyczynę.
+            $this->alertMerchant($orderId, $dbOrder, $exception, $logger);
 
             return false;
         } catch (Throwable $exception) {
@@ -588,7 +640,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
 
         $method->custom_html = '<div class="hikashop_przelewy24_blik">'
             . '<img class="hikashop_przelewy24_blik_logo" src="'
-            . $this->escape(Uri::root(true) . '/media/com_hikashop/images/payment/BLIK.svg')
+            . $this->escape(Uri::root(true) . '/media/plg_hikashoppayment_przelewy24/BLIK.svg')
             . '" alt="BLIK" width="48" height="24" style="vertical-align:middle;margin-right:8px" />'
             . '<label for="hikashop_przelewy24_blik_code">'
             . $this->escape(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_BLIK_CODE')) . '</label> '
@@ -608,7 +660,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
         $metoda = parent::onPaymentSave($cart, $rates, $payment_id);
 
         $app  = Factory::getApplication();
-        $code = BlikService::normaliseCode((string) $app->input->getString('hikashop_przelewy24_blik_code', ''));
+        $code = BlikService::normaliseCode((string) $app->getInput()->getString('hikashop_przelewy24_blik_code', ''));
 
         // Kod trzymamy w stanie sesji, nie w bazie: jest jednorazowy
         // i ważny około dwóch minut, więc nie ma czego przechowywać.
@@ -659,7 +711,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
      */
     protected function isPayLaterRequest()
     {
-        $input = Factory::getApplication()->input;
+        $input = Factory::getApplication()->getInput();
 
         // HikaShop przyjmuje też parę view/layout zamiast ctrl/task.
         $ctrl = $input->getCmd('ctrl', '') ?: $input->getCmd('view', '');
@@ -714,252 +766,6 @@ class Przelewy24 extends \hikashopPaymentPlugin
     }
 
     /**
-     * Zwraca pieniądze, gdy sprzedawca nada zamówieniu ustalony status.
-     *
-     * HikaShop nie wywołuje onOrderPaymentRefund() z panelu, więc zwrot
-     * podpinamy pod własne zdarzenie HikaShopa: zmianę zamówienia.
-     * Wyzwalacz jest domyślnie wyłączony i wymaga wskazania statusu
-     * w konfiguracji metody płatności.
-     *
-     * @param  object  $order       zmieniane zamówienie
-     * @param  bool    $send_email  czy HikaShop wyśle powiadomienie
-     */
-    public function onAfterOrderUpdate(&$order, &$send_email)
-    {
-        // Zapis danych zwrotu przy zamówieniu sam wywołuje to zdarzenie
-        // ponownie. Bez tej blokady powstałaby pętla, a przy niej kolejne
-        // zgłoszenia zwrotu.
-        static $wTrakcie = [];
-
-        $orderId = (int) ($order->order_id ?? 0);
-
-        if ($orderId <= 0 || isset($wTrakcie[$orderId])) {
-            return;
-        }
-
-        $nowyStatus = (string) ($order->order_status ?? '');
-
-        if ($nowyStatus === '') {
-            return;
-        }
-
-        // Zdarzenie dostajemy dla KAŻDEGO zamówienia w sklepie, także
-        // opłaconego inną metodą. Pełne dane bierzemy z bazy, bo obiekt
-        // zdarzenia zawiera zwykle tylko zmienione pola.
-        $dbOrder = $this->getOrder($orderId);
-
-        if (empty($dbOrder) || ($dbOrder->order_payment_method ?? '') !== $this->name) {
-            return;
-        }
-
-        if (!$this->loadPaymentParams($dbOrder)) {
-            return;
-        }
-
-        $config = Config::fromPaymentParams($this->payment_params);
-
-        if ($config->refundStatus === '' || $nowyStatus !== $config->refundStatus) {
-            return;
-        }
-
-        // Zwrot zgłaszamy raz. Powtórzenie oddałoby pieniądze drugi raz.
-        if (OrderPaymentData::getString($dbOrder, OrderPaymentData::REFUND_REQUEST_ID) !== '') {
-            return;
-        }
-
-        $wTrakcie[$orderId] = true;
-
-        try {
-            $zgloszony = $this->onOrderPaymentRefund($dbOrder, null);
-
-            $this->informAboutRefund($orderId, $dbOrder, $zgloszony);
-        } finally {
-            unset($wTrakcie[$orderId]);
-        }
-    }
-
-    /**
-     * Mówi sprzedawcy wprost, co się właśnie stało z pieniędzmi.
-     */
-    protected function informAboutRefund($orderId, $order, $zgloszony)
-    {
-        $app = Factory::getApplication();
-
-        if (!$app->isClient('administrator')) {
-            return;
-        }
-
-        if (!$zgloszony) {
-            $app->enqueueMessage(
-                Text::sprintf('PLG_HIKASHOPPAYMENT_PRZELEWY24_REFUND_FAILED_NOTICE', $order->order_number ?? $orderId),
-                'error'
-            );
-
-            return;
-        }
-
-        $kwota = Amount::fromMinorUnit(
-            OrderPaymentData::getInt($order, OrderPaymentData::REFUND_AMOUNT),
-            $this->currencyFractionDigits()
-        );
-
-        $app->enqueueMessage(
-            Text::sprintf(
-                'PLG_HIKASHOPPAYMENT_PRZELEWY24_REFUND_SENT_NOTICE',
-                number_format($kwota, 2, ',', ' '),
-                $this->currencyCode(),
-                $order->order_number ?? $orderId
-            ),
-            'warning'
-        );
-    }
-
-    /**
-     * Zwrot pełny lub częściowy.
-     *
-     * Uwaga: HikaShop 5.1.2 nie wywołuje tej metody z żadnego miejsca
-     * w panelu, choć deklaruje ją w klasie bazowej wtyczek płatności.
-     * Implementacja jest zgodna z tym interfejsem, więc zadziała tam,
-     * gdzie HikaShop ją podepnie, i daje się wywołać z własnego kodu.
-     *
-     * @param  object      $order  zamówienie HikaShopa
-     * @param  float|null  $total  kwota zwrotu, pusta oznacza całość
-     *
-     * @return bool  czy P24 przyjęło zgłoszenie zwrotu
-     */
-    public function onOrderPaymentRefund(&$order, $total)
-    {
-        if (empty($order->order_id)) {
-            return false;
-        }
-
-        $orderId = (int) $order->order_id;
-
-        if (!$this->loadPaymentParams($order)) {
-            $this->writeToLog('P24 [BŁĄD] Zwrot: brak parametrów metody płatności | order_id=' . $orderId);
-
-            return false;
-        }
-
-        $config = Config::fromPaymentParams($this->payment_params);
-        $logger = $this->buildLogger($config);
-
-        try {
-            $config->assertComplete();
-
-            $this->loadOrderData($order);
-
-            $sessionId  = OrderPaymentData::getString($order, OrderPaymentData::SESSION_ID);
-            $p24OrderId = OrderPaymentData::getInt($order, OrderPaymentData::P24_ORDER_ID);
-
-            if ($sessionId === '' || $p24OrderId <= 0) {
-                // Bez identyfikatora transakcji nadanego przez P24 nie ma
-                // czego zwracać. Taki stan oznacza, że zapłata nigdy nie
-                // została potwierdzona powiadomieniem.
-                $logger->error('Zwrot niemożliwy, brak potwierdzonej transakcji P24', [
-                    'order_id' => $orderId,
-                ]);
-
-                return false;
-            }
-
-            $fractionDigits = $this->currencyFractionDigits();
-            $paidAmount     = OrderPaymentData::getInt($order, OrderPaymentData::AMOUNT);
-
-            $amount = empty($total)
-                ? $paidAmount
-                : Amount::toMinorUnit($total, $fractionDigits);
-
-            if ($amount <= 0) {
-                $logger->error('Zwrot niemożliwy, kwota jest zerowa', ['order_id' => $orderId]);
-
-                return false;
-            }
-
-            if ($paidAmount > 0 && $amount > $paidAmount) {
-                $logger->error('Zwrot niemożliwy, kwota przekracza zapłaconą', [
-                    'order_id'   => $orderId,
-                    'zwrot_gr'   => $amount,
-                    'zaplata_gr' => $paidAmount,
-                ]);
-
-                return false;
-            }
-
-            $client  = new ApiClient($config, $logger, self::VERSION, HIKASHOP_LIVE);
-            $service = new RefundService($client, $config, $logger);
-
-            $wynik = $service->refund(
-                $sessionId,
-                $p24OrderId,
-                $amount,
-                Text::sprintf('PLG_HIKASHOPPAYMENT_PRZELEWY24_REFUND_DESCRIPTION', $order->order_number ?? $orderId),
-                $this->buildRefundNotifyUrl($order)
-            );
-
-            $status = $wynik['status'];
-
-            OrderPaymentData::store($orderId, [
-                OrderPaymentData::REFUND_REQUEST_ID => $wynik['requestId'],
-                OrderPaymentData::REFUND_AMOUNT     => $amount,
-                OrderPaymentData::REFUND_STATUS     => $status?->value ?? 0,
-            ]);
-
-            if ($status !== null && $status->isRejected()) {
-                $logger->error('P24 odrzuciło zwrot', [
-                    'order_id'  => $orderId,
-                    'requestId' => $wynik['requestId'],
-                ]);
-
-                return false;
-            }
-
-            $logger->info('Zwrot zgłoszony', [
-                'order_id'  => $orderId,
-                'kwota_gr'  => $amount,
-                'stan'      => $status?->name ?? 'nieznany',
-            ]);
-
-            return true;
-        } catch (ConfigurationException $exception) {
-            $logger->error('Zwrot niemożliwy, niekompletna konfiguracja', [
-                'order_id' => $orderId,
-                'powod'    => $exception->getMessage(),
-            ]);
-
-            return false;
-        } catch (ApiException $exception) {
-            $logger->error('Zgłoszenie zwrotu nie powiodło się', [
-                'order_id' => $orderId,
-                'http'     => $exception->getHttpStatus(),
-                'powod'    => $exception->getMessage(),
-            ]);
-
-            return false;
-        } catch (Throwable $exception) {
-            $logger->error('Nieoczekiwany błąd przy zwrocie', [
-                'order_id' => $orderId,
-                'powod'    => $exception->getMessage(),
-            ]);
-
-            return false;
-        }
-    }
-
-    /**
-     * Adres, na który P24 ma przysłać powiadomienie o stanie zwrotu.
-     */
-    protected function buildRefundNotifyUrl($order)
-    {
-        return HIKASHOP_LIVE . 'index.php?option=com_hikashop&ctrl=checkout&task=notify'
-            . '&notif_payment=' . $this->name
-            . '&p24_notify=refund'
-            . '&tmpl=component'
-            . '&order_id=' . (int) $order->order_id
-            . '&order_token=' . md5((string) $order->order_token);
-    }
-
-    /**
      * Surowa treść powiadomienia przysłanego przez P24.
      *
      * Wydzielone do osobnej metody, żeby testy mogły podstawić własną
@@ -973,9 +779,9 @@ class Przelewy24 extends \hikashopPaymentPlugin
     /**
      * Nadaje zamówieniu status nieudanej płatności.
      *
-     * Wołane wyłącznie wtedy, gdy P24 definitywnie odmówiło: albo
-     * odpowiedziało, że transakcja nie jest potwierdzona, albo odrzuciło
-     * weryfikację kodem HTTP. Zerwane połączenie odmową nie jest.
+     * Wołane wyłącznie wtedy, gdy P24 wprost odpowiedziało, że transakcja
+     * nie jest potwierdzona. Błąd HTTP, zerwane połączenie czy odrzucone
+     * dane dostępowe odmową nie są: patrz alertMerchant().
      *
      * Zamówienia już opłaconego nie ruszamy nigdy. W HikaShopie status
      * anulowania potrafi zwrócić towar na stan, więc pomyłka w tę stronę
@@ -1024,9 +830,92 @@ class Przelewy24 extends \hikashopPaymentPlugin
     }
 
     /**
-     * Czy zamówienie jest już w statusie oznaczającym zapłatę.
+     * Zawiadamia sprzedawcę, że zapłaty nie udało się zweryfikować.
+     *
+     * Jedna wiadomość na zamówienie: P24 ponawia powiadomienie kilka razy
+     * i bez tej blokady każde powtórzenie dokładałoby kolejny e-mail.
+     * Wiadomość idzie na adres powiadomień o płatnościach z konfiguracji
+     * HikaShopa, tą samą drogą, której używają wtyczki rdzenia.
+     */
+    protected function alertMerchant($orderId, $order, ApiException $exception, Logger $logger)
+    {
+        if (\is_object($order) && OrderPaymentData::getString($order, OrderPaymentData::VERIFY_ALERT_AT) !== '') {
+            return;
+        }
+
+        try {
+            $adresat = \function_exists('hikashop_config')
+                ? trim((string) hikashop_config()->get('payment_notification_email', ''))
+                : '';
+
+            if ($adresat === '') {
+                $logger->warning('Brak adresu powiadomień o płatnościach w konfiguracji HikaShopa, sprzedawca nie dostanie wiadomości', [
+                    'order_id' => $orderId,
+                ]);
+
+                return;
+            }
+
+            $numer     = (string) ($order->order_number ?? $orderId);
+            $odpowiedz = $exception->getHttpStatus() > 0
+                ? 'HTTP ' . $exception->getHttpStatus() . ', ' . $exception->getMessage()
+                : $exception->getMessage();
+
+            $email          = new \stdClass();
+            $email->subject = Text::sprintf('PLG_HIKASHOPPAYMENT_PRZELEWY24_VERIFY_ALERT_SUBJECT', $numer);
+            $email->body    = implode("\n\n", [
+                Text::sprintf('PLG_HIKASHOPPAYMENT_PRZELEWY24_VERIFY_ALERT_INTRO', $numer, $logger->redact($odpowiedz)),
+                Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_VERIFY_ALERT_STATE'),
+                Text::sprintf(
+                    'PLG_HIKASHOPPAYMENT_PRZELEWY24_VERIFY_ALERT_CAUSES',
+                    OrderPaymentData::getString(\is_object($order) ? $order : null, OrderPaymentData::SESSION_ID)
+                ),
+            ]);
+
+            // Fałsz w miejscu numeru zamówienia każe klasie bazowej wysłać
+            // samą wiadomość, bez zapisywania czegokolwiek w zamówieniu.
+            $bezZamowienia = false;
+            $this->modifyOrder($bezZamowienia, null, null, $email);
+
+            OrderPaymentData::store((int) $orderId, [
+                OrderPaymentData::VERIFY_ALERT_AT => gmdate('c'),
+            ]);
+
+            $logger->warning('Sprzedawca zawiadomiony o nieudanej weryfikacji', ['order_id' => $orderId]);
+        } catch (Throwable $blad) {
+            $logger->error('Nie udało się zawiadomić sprzedawcy o nieudanej weryfikacji', [
+                'order_id' => $orderId,
+                'powod'    => $blad->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Czy za zamówienie już zapłacono.
+     *
+     * Najpewniejszym dowodem jest nasz własny znacznik weryfikacji.
+     * Status zamówienia jest dowodem słabszym, ale jedynym dla zamówień
+     * potwierdzonych ręcznie przez sprzedawcę.
      */
     protected function isAlreadyPaid($order, Config $config)
+    {
+        if (\is_object($order) && OrderPaymentData::getString($order, OrderPaymentData::VERIFIED_AT) !== '') {
+            return true;
+        }
+
+        return $this->hasPaidStatus($order, $config);
+    }
+
+    /**
+     * Czy zamówienie jest w statusie oznaczającym zapłatę.
+     *
+     * Sam status potwierdzenia z konfiguracji metody nie wystarcza:
+     * zamówienie wysłane też jest opłacone, a cofnięcie go do statusu
+     * potwierdzenia wysłałoby klientowi drugi e-mail. Listę statusów
+     * opłaconych HikaShop trzyma u siebie, jako statusy, w których
+     * wystawia fakturę.
+     */
+    protected function hasPaidStatus($order, Config $config)
     {
         $current = (string) ($order->order_status ?? '');
 
@@ -1034,7 +923,14 @@ class Przelewy24 extends \hikashopPaymentPlugin
             return false;
         }
 
-        return $current === $config->verifiedStatus;
+        $paid = [$config->verifiedStatus];
+
+        if (\function_exists('hikashop_config')) {
+            $lista = (string) hikashop_config()->get('invoice_order_statuses', 'confirmed,shipped');
+            $paid  = array_merge($paid, array_map('trim', explode(',', $lista)));
+        }
+
+        return \in_array($current, $paid, true);
     }
 
     protected function buildLogger(Config $config)
@@ -1118,9 +1014,9 @@ class Przelewy24 extends \hikashopPaymentPlugin
      */
     protected function handleRetry()
     {
-        $app     = Factory::getApplication();
-        $orderId = (int) $app->input->get('order_id', 0, 'int');
-        $token   = (string) $app->input->get('p24_retry', '', 'string');
+        $input   = Factory::getApplication()->getInput();
+        $orderId = (int) $input->get('order_id', 0, 'int');
+        $token   = (string) $input->get('p24_retry', '', 'string');
 
         $dbOrder = $this->getOrder($orderId);
 
@@ -1145,7 +1041,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
         // ponownie: towar mógł już wrócić na stan.
         $status = (string) ($dbOrder->order_status ?? '');
 
-        if (\in_array($status, array_filter([$config->refundStatus, 'cancelled', 'refunded']), true)) {
+        if (\in_array($status, $this->closedStatuses(), true)) {
             $logger->warning('Ponowienie zapłaty za zamknięte zamówienie', [
                 'order_id' => $orderId,
                 'status'   => $status,
@@ -1168,6 +1064,26 @@ class Przelewy24 extends \hikashopPaymentPlugin
         $this->redirectTo($this->p24_paywall_url);
 
         return true;
+    }
+
+    /**
+     * Statusy zamówień zamkniętych: anulowanych i zwróconych.
+     *
+     * Do dwóch nazw rdzenia dokładamy listę z konfiguracji HikaShopa,
+     * bo sklep może mieć własne statusy anulowania.
+     *
+     * @return list<string>
+     */
+    protected function closedStatuses()
+    {
+        $statusy = ['cancelled', 'refunded'];
+
+        if (\function_exists('hikashop_config')) {
+            $lista   = (string) hikashop_config()->get('cancelled_order_status', 'cancelled,refunded');
+            $statusy = array_merge($statusy, array_map('trim', explode(',', $lista)));
+        }
+
+        return array_values(array_unique(array_filter($statusy, static fn ($status): bool => $status !== '')));
     }
 
     /**
@@ -1241,12 +1157,12 @@ class Przelewy24 extends \hikashopPaymentPlugin
      */
     protected function clientIp(): string
     {
-        return (string) Factory::getApplication()->input->server->getString('REMOTE_ADDR', '');
+        return (string) Factory::getApplication()->getInput()->server->getString('REMOTE_ADDR', '');
     }
 
     protected function clientUserAgent(): string
     {
-        return (string) Factory::getApplication()->input->server->getString('HTTP_USER_AGENT', '');
+        return (string) Factory::getApplication()->getInput()->server->getString('HTTP_USER_AGENT', '');
     }
 
     protected function currencyCode()
@@ -1272,9 +1188,27 @@ class Przelewy24 extends \hikashopPaymentPlugin
 
     /**
      * Wartość zamówienia brutto.
+     *
+     * Kwotę bierzemy z bazy, czyli z tego samego miejsca, z którego
+     * weźmie ją potem obsługa powiadomienia. Koszyk trzyma ją jako liczbę
+     * zmiennoprzecinkową o pełnej precyzji, a baza zaokrągla do pięciu
+     * miejsc. Przy wartości tuż pod granicą pół grosza (koszyk 10,0049999
+     * daje 1000 gr, baza 10,00500 daje 1001 gr) obie drogi dawały różne
+     * grosze i powiadomienie o prawidłowej zapłacie byłoby odrzucane
+     * jako niezgodne z kwotą zamówienia.
      */
     protected function orderTotal($order)
     {
+        $orderId = (int) ($order->order_id ?? 0);
+
+        if ($orderId > 0) {
+            $zapisane = $this->getOrder($orderId);
+
+            if (\is_object($zapisane) && isset($zapisane->order_full_price) && (float) $zapisane->order_full_price > 0) {
+                return $zapisane->order_full_price;
+            }
+        }
+
         if (isset($order->cart->full_total->prices[0]->price_value_with_tax)) {
             return $order->cart->full_total->prices[0]->price_value_with_tax;
         }

@@ -70,8 +70,6 @@ $klasy = [
     'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Logger',
     'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Notification',
     'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\OrderPaymentData',
-    'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\RefundService',
-    'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\RefundStatus',
     'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\RegisterRequest',
     'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\SessionId',
     'Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Signature',
@@ -82,6 +80,27 @@ $klasy = [
 foreach ($klasy as $klasa) {
     sprawdz('klasa ' . $klasa, class_exists($klasa));
 }
+
+// Zwroty zostaly usuniete w 1.0.7. Aktualizacja Joomli nie kasuje plikow,
+// ktorych nie ma w nowej paczce, wiec sprzata po nich script.php.
+foreach (['RefundService', 'RefundStatus'] as $usunieta) {
+    sprawdz(
+        'po aktualizacji nie zostal plik ' . $usunieta . '.php',
+        !is_file(JPATH_PLUGINS . '/hikashoppayment/przelewy24/src/Payment/' . $usunieta . '.php')
+    );
+}
+
+sprawdz('wtyczka nie deklaruje obslugi zwrotow', empty($wtyczka->features['refund']));
+sprawdz('wtyczka nie nasluchuje zmian zamowienia', !method_exists($wtyczka, 'onAfterOrderUpdate'));
+sprawdz(
+    'logotypy leza we wlasnym katalogu wtyczki',
+    is_file(JPATH_ROOT . '/media/plg_hikashoppayment_przelewy24/BLIK.svg')
+    && is_file(JPATH_ROOT . '/media/plg_hikashoppayment_przelewy24/przelewy24.svg')
+);
+sprawdz(
+    'obrazki platnosci HikaShopa sa na miejscu',
+    count(glob(JPATH_ROOT . '/media/com_hikashop/images/payment/*') ?: []) > 10
+);
 
 echo PHP_EOL . '3. Zachowanie w srodowisku Joomli' . PHP_EOL;
 

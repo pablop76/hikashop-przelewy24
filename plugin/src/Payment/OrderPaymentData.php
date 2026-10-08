@@ -30,9 +30,8 @@ final class OrderPaymentData
     public const VERIFIED_AT  = 'p24_verified_at';
     public const ATTEMPTS     = 'p24_attempts';
 
-    public const REFUND_REQUEST_ID = 'p24_refund_request_id';
-    public const REFUND_AMOUNT     = 'p24_refund_amount';
-    public const REFUND_STATUS     = 'p24_refund_status';
+    /** Chwila, w której sprzedawca dostał alert o nieudanej weryfikacji. */
+    public const VERIFY_ALERT_AT = 'p24_verify_alert_at';
 
     private function __construct()
     {

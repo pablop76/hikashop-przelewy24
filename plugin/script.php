@@ -28,6 +28,21 @@ return new class () implements ServiceProviderInterface {
                 /** Minimalna wersja PHP. */
                 private string $minimumPhp = '8.1';
 
+                /**
+                 * Pliki z wcześniejszych wersji, których już nie ma w paczce.
+                 *
+                 * Aktualizacja nadpisuje katalogi wtyczki, ale nie usuwa
+                 * z nich plików nieobecnych w nowej paczce. Bez sprzątania
+                 * zostałby na serwerze kod zwrotów usuniętych w 1.0.7.
+                 */
+                private const OSIEROCONE_PLIKI = [
+                    'src/Payment/RefundService.php',
+                    'src/Payment/RefundStatus.php',
+                ];
+
+                /** Logotypy kopiowane do obrazków metod płatności HikaShopa. */
+                private const LOGOTYPY = ['przelewy24.svg', 'BLIK.svg'];
+
                 public function preflight(string $type, InstallerAdapter $parent): bool
                 {
                     if (version_compare(PHP_VERSION, $this->minimumPhp, '<')) {
@@ -83,6 +98,8 @@ return new class () implements ServiceProviderInterface {
                     }
 
                     $this->wlaczWtyczke();
+                    $this->usunOsieroconePliki();
+                    $this->skopiujLogotypy();
 
                     $this->komunikat(
                         'Przelewy24 zainstalowane i włączone. Metodę płatności dodaj w HikaShopie: '
@@ -116,6 +133,42 @@ return new class () implements ServiceProviderInterface {
                     } catch (\Throwable) {
                         // Nieudane włączenie nie może przerwać instalacji.
                         // Sprzedawca włączy wtyczkę ręcznie.
+                    }
+                }
+
+                private function usunOsieroconePliki(): void
+                {
+                    $katalog = JPATH_PLUGINS . '/hikashoppayment/przelewy24/';
+
+                    foreach (self::OSIEROCONE_PLIKI as $plik) {
+                        if (is_file($katalog . $plik)) {
+                            @unlink($katalog . $plik);
+                        }
+                    }
+                }
+
+                /**
+                 * Kopiuje logotypy do obrazków metod płatności HikaShopa,
+                 * żeby dało się je wybrać w polu „Obrazki” metody płatności.
+                 *
+                 * Istniejącego pliku nie nadpisujemy: sklep mógł mieć pod tą
+                 * nazwą własny obrazek. Z tego samego powodu przy
+                 * odinstalowaniu niczego stamtąd nie usuwamy. To katalog
+                 * HikaShopa, nie nasz.
+                 */
+                private function skopiujLogotypy(): void
+                {
+                    $zrodlo = JPATH_ROOT . '/media/plg_hikashoppayment_przelewy24/';
+                    $cel    = JPATH_ROOT . '/media/com_hikashop/images/payment/';
+
+                    if (!is_dir($zrodlo) || !is_dir($cel)) {
+                        return;
+                    }
+
+                    foreach (self::LOGOTYPY as $plik) {
+                        if (is_file($zrodlo . $plik) && !is_file($cel . $plik)) {
+                            @copy($zrodlo . $plik, $cel . $plik);
+                        }
                     }
                 }
 

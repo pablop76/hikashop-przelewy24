@@ -21,54 +21,33 @@ Wtyczka powstaje etapami. Rdzeń integracji jest gotowy i pokryty testami.
 | Weryfikacja powiadomień | gotowe |
 | Przekierowanie na stronę płatności P24 | gotowe |
 | Formularz konfiguracji, tłumaczenia pl i en, paczka instalacyjna | gotowe |
-| Zwroty pełne i częściowe | gotowe, z wyzwalaczem przez status zamówienia |
+| Zwroty | poza wtyczką, robi się je w panelu Przelewy24 |
 | Pełny przebieg zapłaty w sandboksie | wymaga adresu osiągalnego z internetu |
 | BLIK z kodem w sklepie | gotowe |
 | Karta w sklepie, Apple Pay, Google Pay | przepływ ustalony, do zbudowania |
 | Raty | gotowe, przez narzuconą metodę 303 |
 
-### Uwaga o zwrotach
+### Zwroty
 
-Wtyczka implementuje `onOrderPaymentRefund()` zgodnie z interfejsem wtyczek
-płatności HikaShopa i obsługuje zwroty pełne oraz częściowe.
+**Wtyczka nie zwraca pieniędzy. Zwroty robi się w panelu Przelewy24**, w szczegółach
+transakcji. Da się tam zwrócić całość albo część i od razu widać saldo.
 
-HikaShop 5.1.2 Business **nie wywołuje tej metody z żadnego miejsca w panelu**.
-Deklaruje ją w klasie bazowej i sprawdza flagę `features['refund']` przy
-filtrowaniu metod płatności, ale samego zwrotu nigdzie nie inicjuje. Jedyna
-inna wtyczka, która ją implementuje, `ogone`, też nie ma kto wywołać.
-Dla porównania `onOrderPaymentCapture()` jest wywoływane normalnie,
-z `classes/order.php`.
+Do wersji 1.0.6 wtyczka potrafiła zgłosić zwrot, gdy zamówienie dostawało
+wskazany status. W 1.0.7 ten mechanizm został usunięty w całości, z trzech powodów:
 
-Dlatego zwrot podpinamy pod własne zdarzenie HikaShopa: **zmianę statusu
-zamówienia**. W konfiguracji metody płatności wskazujesz status, na przykład
-„zwrócone", i od tej chwili nadanie go zamówieniu zgłasza zwrot do Przelewów24.
+- **HikaShop nie ma w panelu czynności „zwróć pieniądze”.** Metodę
+  `onOrderPaymentRefund()` deklaruje w klasie bazowej, ale nigdzie jej nie
+  wywołuje (sprawdzone w 5.1.2 i 6.6.0). Zwrot dawało się więc podpiąć tylko
+  pod zmianę statusu zamówienia
+- **Status zmienia się rutynowo**, także hurtem i przez akcje masowe HikaShopa,
+  a zwrotu nie da się cofnąć. Jedno kliknięcie za dużo oznaczało przelew wychodzący
+- **Kod używany raz na kilkaset zamówień ukrywa błędy.** W 1.0.0 i 1.0.1 zwykły
+  zapis konfiguracji po cichu włączał zwroty na pierwszym statusie z listy.
+  Do 1.0.6 zwrot przyjęty przez P24 był zgłaszany sprzedawcy jako nieudany,
+  bo P24 odpowiada na niego kodem 201, a wtyczka uznawała tylko 200
 
-**Domyślnie wyłączone.** Pozycja „— bez automatycznych zwrotów —” na liście
-statusów oznacza, że zwroty nie uruchamiają się same. Automat oddający
-pieniądze musi zostać włączony świadomie.
-
-Ta pozycja jest dołożona przez wtyczkę, bo lista statusów HikaShopa nie ma
-pustej opcji. Bez niej przeglądarka zaznaczała pierwszy status z listy
-i zwykły zapis konfiguracji po cichu włączał zwroty (błąd w 1.0.0 i 1.0.1).
-
-Sprzedawca dowiaduje się o tym w trzech miejscach: w opisie pola, ostrzeżeniem
-przy każdym otwarciu konfiguracji z włączonym wyzwalaczem oraz komunikatem po
-samym zgłoszeniu zwrotu, z kwotą i numerem zamówienia.
-
-Zabezpieczenia:
-
-- zwrot zgłaszany **raz na zamówienie**, po identyfikatorze zgłoszenia
-- tylko dla płatności **wcześniej potwierdzonej** przez `transaction/verify`
-- tylko dla zamówień opłaconych tą metodą płatności
-- blokada pętli: zapis danych zwrotu sam wywołuje zdarzenie zmiany zamówienia
-
-Zwrot częściowy zostaje do wywołania z kodu:
-
-```php
-$plugin = hikashop_import('hikashoppayment', 'przelewy24');
-$order  = hikashop_get('class.order')->get($orderId);
-$plugin->onOrderPaymentRefund($order, 19.99);   // pusta kwota oznacza całość
-```
+Po aktualizacji stare ustawienie „status uruchamiający zwrot” jest ignorowane,
+a z formularza konfiguracji znika. Niczego nie trzeba przestawiać.
 
 ### BLIK w kasie
 
@@ -202,10 +181,18 @@ Zainstaluj w panelu Joomli. Budowanie wymaga rozszerzenia `zip` w PHP.
 Po instalacji metodę płatności dodaje się w HikaShopie: System → Metody
 płatności → Nowa → Przelewy24.
 
-Wtyczka instaluje dwa logotypy do obrazków metod płatności HikaShopa
-(`media/com_hikashop/images/payment`): `przelewy24.svg`, domyślny obrazek
-metody, oraz `BLIK.svg`. Oba można wybrać w polu „Obrazki” metody płatności.
-Logotypy pochodzą z oficjalnych materiałów BLIK i Przelewów24.
+Wtyczka instaluje dwa logotypy, `przelewy24.svg` i `BLIK.svg`, do własnego
+katalogu `media/plg_hikashoppayment_przelewy24`, a potem kopiuje je do obrazków
+metod płatności HikaShopa (`media/com_hikashop/images/payment`), żeby dało się
+je wybrać w polu „Obrazki” metody płatności. Istniejącego tam pliku o tej samej
+nazwie nie nadpisuje. Logotypy pochodzą z oficjalnych materiałów BLIK i Przelewów24.
+
+**Przed odinstalowaniem wersji 1.0.6 lub starszej najpierw zaktualizuj wtyczkę.**
+Starsze wersje wskazywały katalog obrazków HikaShopa wprost w manifeście,
+a Joomla przy odinstalowaniu kasuje cały katalog docelowy, nie tylko wymienione
+pliki. Odinstalowanie usuwało więc logotypy wszystkich metod płatności w sklepie.
+Od 1.0.7 Joomla kasuje wyłącznie katalog wtyczki, a kopie w obrazkach HikaShopa
+zostają na miejscu. Można je usunąć ręcznie.
 
 ## Zasady integracji
 
@@ -260,13 +247,48 @@ się w ten sposób opłacić ponownie.
 zgodność sesji z zapisaną przy zamówieniu oraz kwotę i walutę. Niezgodność
 w którymkolwiek z tych punktów oznacza, że zamówienia nie wolno ruszyć.
 
+**O tym, czy zapłata jest potwierdzona, decyduje nasz znacznik, nie status
+zamówienia.** Po udanym `transaction/verify` wtyczka zapisuje przy zamówieniu
+chwilę potwierdzenia. Kolejne powiadomienia dla takiego zamówienia są pomijane.
+Sam status tego nie rozstrzyga, bo sprzedawca zmienia go ręcznie:
+
+- zamówienie potwierdzone ręcznie, zanim doszło powiadomienie, **i tak jest
+  weryfikowane**. Bez weryfikacji Przelewy24 nie rozliczają wpłaty i zostaje
+  ona do dyspozycji klienta. Do 1.0.6 weryfikacja była w takim przypadku pomijana
+- zamówienie, które ma już status opłaconego albo poszło do wysyłki, **nie jest
+  cofane** do statusu potwierdzenia i klient nie dostaje drugiego e-maila.
+  Za opłacone uchodzą statusy, w których HikaShop wystawia fakturę
+- drugiej, osobnej wpłaty za zweryfikowane zamówienie nie weryfikujemy, więc
+  wraca ona do klienta
+
+**Błąd weryfikacji nie zmienia statusu zamówienia.** Przelewy24 wysyłają
+powiadomienia tylko dla transakcji opłaconych. Jeżeli po poprawnie podpisanym
+powiadomieniu weryfikacja kończy się błędem (401, 400, 500, brak odpowiedzi),
+to kłopot leży po stronie sklepu albo bramki, a klient zapłacił. Do 1.0.6
+taka odpowiedź nadawała zamówieniu status nieudanej płatności, czyli zwykle
+je anulowała i wysyłała klientowi e-mail. Teraz status zostaje, a sprzedawca
+dostaje jedną wiadomość na adres powiadomień o płatnościach z konfiguracji
+HikaShopa. Przelewy24 ponawiają powiadomienie przez kilka godzin, więc po
+usunięciu przyczyny zapłata potwierdza się sama. Status nieudanej płatności
+nadaje wyłącznie jawna odpowiedź P24 ze statusem innym niż `success`.
+
+**Kwota pochodzi z jednego miejsca.** Rejestracja transakcji i obsługa
+powiadomienia czytają kwotę zamówienia z bazy. Koszyk trzyma ją jako liczbę
+zmiennoprzecinkową o pełnej precyzji, a baza zaokrągla do pięciu miejsc;
+tuż pod granicą pół grosza (koszyk 10,0049999, baza 10,00500) obie postacie
+dawały różne grosze i prawidłowa zapłata byłaby odrzucana.
+
+**Adres e-mail nie jest przycinany.** Przelewy24 przyjmują adresy do 50 znaków.
+Przycięty adres należy do kogoś innego, więc przy dłuższym płatność się nie
+zaczyna, a klient widzi, w czym rzecz.
+
 **Sekrety nie trafiają do logu.** `Logger` wymazuje wartości klucza API i CRC
 zarówno z pól kontekstu, jak i z treści komunikatów.
 
 ## Zachowania P24 ustalone na sandboksie
 
-Sprawdzone 23.09.2026 na koncie testowym, skryptem `tests/sandbox.php`.
-Warto je znać, bo dokumentacja ich nie opisuje.
+Sprawdzone 23.09.2026 i 07.10.2026 na koncie testowym. Warto je znać, bo
+dokumentacja ich nie opisuje albo opisuje niejednoznacznie.
 
 **Dostęp do API wymaga zarejestrowania adresu IP.** Bez wpisu w panelu
 („Moje dane" → „Dane API i konfiguracja" → „Adres IP") każde wywołanie
@@ -277,7 +299,10 @@ Adres musi być tym, z którego wychodzi ruch serwera sklepu.
 **Hasłem uwierzytelniania Basic jest „Klucz do raportów".** W panelu nie
 nazywa się kluczem API, ale to właśnie on. „Klucz do zamówień" obsługuje
 stare API formularzowe i w REST jest nieużywany. Loginem jest identyfikator
-sprzedawcy, nie identyfikator sklepu.
+sprzedawcy. Dokumentacja mówi w tym miejscu o `posId`, ale oficjalna wtyczka
+Przelewy24 dla WooCommerce loguje się identyfikatorem sprzedawcy, więc robimy
+tak samo. Na koncie, na którym oba identyfikatory są równe, tej różnicy nie
+da się sprawdzić.
 
 **`transaction/by/sessionId` nie widzi transakcji przed zapłatą.** Dla
 zarejestrowanej, ale nieopłaconej transakcji P24 odpowiada `HTTP 404
@@ -293,6 +318,26 @@ nie kończy się błędem — P24 zwraca ten sam token co za pierwszym razem.
 negatywną.** P24 zwraca `HTTP 400` z komunikatem `Error call 2`, a nie
 `HTTP 200` ze statusem innym niż `success`. Obsługa musi to traktować
 jako brak potwierdzenia zapłaty, nie jako awarię.
+
+**Powtórna weryfikacja opłaconej transakcji znów odpowiada `success`.**
+Druga `transaction/verify` dla tej samej transakcji zwraca `HTTP 200`
+i `status: success`, a nie błąd. Przed dublowaniem musi więc chronić sklep.
+
+**Nie każde powodzenie to kod 200.** Rejestracja i weryfikacja odpowiadają
+200, ale `transaction/refund` odpowiada 201, a pole `data` jest wtedy listą
+pozycji. Specyfikacja podaje 201 także dla `blik/chargeByCode`. Wtyczka
+uznaje za powodzenie oba kody.
+
+**Kwota musi być liczbą całkowitą także w zapisie JSON.** Wartość
+`1998.9999999999998` kończy się błędem `400 Invalid amount`.
+
+**Ta sama sesja z inną kwotą daje nowy token.** Powtórna rejestracja z tym
+samym `sessionId`, ale inną kwotą, nie jest odrzucana: P24 zwraca nowy token
+i pod jedną sesją żyją wtedy dwie rejestracje.
+
+**Adres e-mail może mieć najwyżej 50 znaków.** Adres o 50 znakach przechodzi,
+o 51 kończy rejestrację błędem `400 Invalid email`. Pola nieobowiązkowe nie
+są sprawdzane tak ściśle: telefon ze spacjami i myślnikami przechodzi.
 
 ## Struktura
 
@@ -313,7 +358,6 @@ tests/
   sandbox.php                    prawdziwe API P24
   joomla.php                     wtyczka w zainstalowanej Joomli
   notification.php               ścieżka powiadomienia
-  refund.php                     zwroty
   blik.php                       BLIK w kasie
   duplikaty.php                  ochrona przed podwójną zapłatą
   bootstrap-joomla.php           wspólny rozruch testów integracyjnych
@@ -348,14 +392,13 @@ ani od Joomli poza klientem HTTP.
 
 ## Testy
 
-Dziewięć zestawów, każdy o innym zasięgu.
+Osiem zestawów, każdy o innym zasięgu.
 
 ```bash
 php tests/run.php          # biblioteka, bez Joomli i bez sieci
 php tests/sandbox.php      # prawdziwe API P24, wymaga danych sandboxa
 php tests/joomla.php       # wtyczka w zainstalowanej Joomli z HikaShopem
 php tests/notification.php # sciezka powiadomienia, siec podstawiona atrapa
-php tests/refund.php       # zwroty, siec podstawiona atrapa
 php tests/blik.php         # BLIK w kasie, siec podstawiona atrapa
 php tests/duplikaty.php    # czy ponowienie nie dubluje transakcji, zywe P24
 php tests/retry.php        # przycisk ponowienia zaplaty, siec podstawiona atrapa

@@ -49,9 +49,14 @@ final class TransportBlik implements TransportInterface
     /** @var list<array{metoda: string, adres: string, tresc: mixed}> */
     public array $wywolania = [];
 
+    /**
+     * Domyslna odpowiedz to 201 w ksztalcie ze specyfikacji P24
+     * (BlikChargeByCodeResponse). Do 1.0.6 atrapa zwracala 200 i dlatego
+     * testy nie widzialy, ze wtyczka brala przyjete obciazenie za blad.
+     */
     public function __construct(
-        private int $kodHttp = 200,
-        private string $odpowiedz = '{"data":{"orderId":123456}}'
+        private int $kodHttp = 201,
+        private string $odpowiedz = '{"data":{"orderId":123456,"message":"success"},"responseCode":0}'
     ) {
     }
 
@@ -154,6 +159,13 @@ wynik('token przekazany', 'TOKEN-TESTOWY-123', $tresc['token'] ?? null);
 wynik('kod BLIK przekazany', '123456', $tresc['blikCode'] ?? null);
 wynik('nic wiecej nie idzie w zadaniu', ['token', 'blikCode'], array_keys($tresc));
 wynik('zwrocono identyfikator transakcji P24', 123456, $p24OrderId);
+
+// Specyfikacja podaje 201, ale starsze odpowiedzi 200 tez musza przechodzic.
+wynik(
+    'odpowiedz 200 rowniez jest przyjeciem obciazenia',
+    654321,
+    uslugaBlik(new TransportBlik(200, '{"data":{"orderId":654321}}'), $config)->chargeByCode('TOKEN', '123456')
+);
 
 $transportSpacje = new TransportBlik();
 uslugaBlik($transportSpacje, $config)->chargeByCode('TOKEN', '12 34 56');

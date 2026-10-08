@@ -29,8 +29,7 @@ final class Config
         public readonly bool $blikInShop,
         public readonly int $paymentMethodId,
         public readonly string $verifiedStatus,
-        public readonly string $invalidStatus,
-        public readonly string $refundStatus
+        public readonly string $invalidStatus
     ) {
     }
 
@@ -60,11 +59,7 @@ final class Config
             // Wartosc dodatnia narzuca konkretna metode, na przyklad 303 dla rat.
             paymentMethodId: max(0, (int) self::read($params, 'payment_method_id', 0)),
             verifiedStatus: (string) self::read($params, 'verified_status', 'confirmed'),
-            invalidStatus: (string) self::read($params, 'invalid_status', 'cancelled'),
-            // Pusty status oznacza, że zwrot NIE uruchamia się sam.
-            // To domyślne zachowanie: automat oddający pieniądze musi
-            // zostać włączony świadomie.
-            refundStatus: trim((string) self::read($params, 'refund_status', ''))
+            invalidStatus: (string) self::read($params, 'invalid_status', 'cancelled')
         );
     }
 

@@ -31,9 +31,19 @@ final class ApiResponse
     ) {
     }
 
+    /**
+     * Kody HTTP, którymi P24 potwierdza przyjęcie żądania.
+     *
+     * Rejestracja i weryfikacja odpowiadają 200. Operacje, które coś
+     * zakładają, odpowiadają 201: według specyfikacji robi tak obciążenie
+     * kodem BLIK, a na sandboksie potwierdziliśmy to dla zwrotu. Uznawanie
+     * samego 200 kończyło się komunikatem o błędzie przy przyjętym żądaniu.
+     */
+    private const SUCCESS_STATUSES = [200, 201];
+
     public function isSuccessful(): bool
     {
-        return $this->httpStatus === 200 && $this->errorMessage === null;
+        return \in_array($this->httpStatus, self::SUCCESS_STATUSES, true) && $this->errorMessage === null;
     }
 
     /**

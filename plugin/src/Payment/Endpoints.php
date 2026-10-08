@@ -22,9 +22,6 @@ final class Endpoints
     public const TRANSACTION_BY_SESSION_ID = 'api/v1/transaction/by/sessionId/{sessionId}';
     public const TRANSACTION_REJECT        = 'api/v1/transaction/reject';
 
-    public const REFUND         = 'api/v1/transaction/refund';
-    public const REFUND_DETAILS = 'api/v1/refund/by/orderId/{orderId}';
-
     public const PAYMENT_METHODS = 'api/v1/payment/methods/{lang}';
     public const CARD_INFO       = 'api/v1/card/info/{orderId}';
 

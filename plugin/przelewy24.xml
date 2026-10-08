@@ -7,8 +7,8 @@
 		Wszystkie wtyczki płatności HikaShopa robią to tak samo.
 	-->
 	<name>HikaShop Payment - Przelewy24</name>
-	<creationDate>2026-10-07</creationDate>
-	<version>1.0.6</version>
+	<creationDate>2026-10-08</creationDate>
+	<version>1.0.7</version>
 	<author>Paweł Półtoraczyk</author>
 	<authorEmail>kontakt@web-service.com.pl</authorEmail>
 	<authorUrl>https://www.web-service.com.pl</authorUrl>
@@ -29,12 +29,14 @@
 	</files>
 
 	<!--
-		Logotypy trafiają do obrazków metod płatności HikaShopa, więc w panelu
-		metody („Obrazki”) można je wybrać jak każdy inny obrazek. Nazwa pliku
-		bez rozszerzenia jest identyfikatorem: domyślny obrazek wtyczki to
-		„przelewy24”. Przy odinstalowaniu Joomla usuwa tylko te dwa pliki.
+		Logotypy instalują się do WŁASNEGO katalogu wtyczki w media. Przy
+		odinstalowaniu Joomla kasuje cały katalog docelowy znacznika media,
+		nie tylko wymienione pliki, więc celowanie nim w katalog obrazków
+		HikaShopa (tak było do 1.0.6) usuwało logotypy wszystkich metod
+		płatności w sklepie. Do obrazków HikaShopa kopiuje je script.php,
+		i tylko wtedy, gdy ich tam jeszcze nie ma.
 	-->
-	<media destination="com_hikashop/images/payment" folder="media">
+	<media destination="plg_hikashoppayment_przelewy24" folder="media">
 		<filename>BLIK.svg</filename>
 		<filename>przelewy24.svg</filename>
 	</media>

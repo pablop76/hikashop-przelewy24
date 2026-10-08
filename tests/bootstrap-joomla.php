@@ -2,7 +2,7 @@
 /**
  * Wspolny rozruch Joomli i HikaShopa dla testow integracyjnych.
  *
- * Dolaczany przez tests/joomla.php, tests/notification.php i tests/refund.php.
+ * Dolaczany przez testy integracyjne: joomla.php, notification.php i pozostale.
  * Sciezke do Joomli mozna podac zmienna srodowiskowa JOOMLA_PATH.
  *
  * Uzywamy aplikacji witryny, a nie konsolowej: powiadomienia z P24
@@ -45,6 +45,12 @@ $app->loadLanguage(
         $container->get('config')->get('language', 'en-GB')
     )
 );
+
+// W zadaniu przegladarkowym aplikacja i Factory dziela jeden obiekt jezyka.
+// Tu, bez execute(), Factory zakladalo wlasny: wtyczka wczytywala tlumaczenia
+// do jezyka aplikacji, a Text::_() szukal ich w tym drugim i zwracal gole
+// klucze. Stad bral sie wieloletni niezdany test tlumaczenia w joomla.php.
+Joomla\CMS\Factory::$language = $app->getLanguage();
 
 // HikaShop uzywa starych nazw klas (JFactory, JText, JHtml). W zadaniu
 // przegladarkowym rejestruje je wtyczka "Behaviour - Backward Compatibility",

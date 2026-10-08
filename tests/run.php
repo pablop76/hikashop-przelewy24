@@ -13,6 +13,7 @@ define('_JEXEC', 1);
 require __DIR__ . '/autoload.php';
 
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Amount;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\ApiResponse;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Config;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Endpoints;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Environment;
@@ -66,6 +67,27 @@ for ($grosze = 0; $grosze <= 100000; $grosze++) {
     }
 }
 sprawdz('wszystkie kwoty 0-1000 zl przeliczaja sie bez straty', true, $wszystkieCalkowite);
+
+// Koszyk HikaShopa trzyma sume jako liczbe zmiennoprzecinkowa o pelnej
+// precyzji, a baza zaokragla ja do pieciu miejsc. Tuz przy granicy pol
+// grosza obie postacie daja inne grosze. Dlatego rejestracja transakcji
+// i obsluga powiadomienia musza brac kwote z tego samego miejsca, z bazy.
+sprawdz('suma z koszyka tuz pod granica pol grosza', 1000, Amount::toMinorUnit(10.0049999));
+sprawdz('ta sama suma po zapisie w bazie daje inny grosz', 1001, Amount::toMinorUnit('10.00500'));
+sprawdz('rowne pol grosza zaokragla sie w gore, jak w cenach HikaShopa', 101, Amount::toMinorUnit('1.00500'));
+
+sekcja('ApiResponse: ktore odpowiedzi sa przyjeciem zadania');
+// Rejestracja i weryfikacja odpowiadaja 200. Operacje, ktore cos zakladaja,
+// odpowiadaja 201: tak specyfikacja opisuje obciazenie kodem BLIK.
+$przyjete201 = ApiResponse::fromDecoded(201, ['data' => ['orderId' => 4300000001, 'message' => 'success'], 'responseCode' => 0]);
+sprawdz('200 to przyjecie zadania', true, ApiResponse::fromDecoded(200, ['data' => ['token' => 'abc'], 'responseCode' => 0])->isSuccessful());
+sprawdz('201 to takze przyjecie zadania', true, $przyjete201->isSuccessful());
+sprawdz('dane z odpowiedzi 201 sa dostepne', 4300000001, $przyjete201->get('orderId'));
+sprawdz('400 to odmowa', false, ApiResponse::fromDecoded(400, ['error' => 'Invalid amount', 'code' => 400])->isSuccessful());
+sprawdz('401 to odmowa', false, ApiResponse::fromDecoded(401, ['error' => 'Incorrect authentication', 'code' => 401])->isSuccessful());
+sprawdz('200 z polem error to odmowa', false, ApiResponse::fromDecoded(200, ['error' => 'cos poszlo zle'])->isSuccessful());
+sprawdz('204 nie jest przyjeciem zadania', false, ApiResponse::fromDecoded(204, [])->isSuccessful());
+sprawdz('500 to odmowa', false, ApiResponse::fromDecoded(500, ['error' => 'Internal error', 'code' => 500])->isSuccessful());
 
 sekcja('Signature: kolejnosc kluczy jest czescia specyfikacji');
 $crc = 'testowy_crc_1234';
@@ -135,6 +157,12 @@ sprawdz('konfiguracja jest kompletna', true, $config->isComplete());
 sprawdz('srodowisko to sandbox', Environment::Sandbox, $config->environment);
 sprawdz('login to merchantId, nie posId', 'Basic ' . base64_encode('12345:sekretny_klucz_api'), $config->basicAuthHeader());
 sprawdz('domyslny status bledu', 'cancelled', $config->invalidStatus);
+sprawdz('konfiguracja nie ma ustawienia zwrotow', false, property_exists($config, 'refundStatus'));
+sprawdz(
+    'stare ustawienie zwrotu w bazie jest ignorowane',
+    false,
+    property_exists(Config::fromPaymentParams((object) ['merchant_id' => '1', 'refund_status' => 'refunded']), 'refundStatus')
+);
 
 $pusty = Config::fromPaymentParams(null);
 sprawdz('brak parametrow to konfiguracja niekompletna', false, $pusty->isComplete());
@@ -313,6 +341,43 @@ $zadanieObcyJezyk = new RegisterRequest(
 );
 sprawdz('nieobslugiwany jezyk zamienia sie na angielski', 'en', $zadanieObcyJezyk->toPayload($config)['language']);
 
+$zJezykiem = static fn (string $jezyk): string => (new RegisterRequest(
+    sessionId: $sesja,
+    amountInMinorUnits: 100,
+    currency: 'PLN',
+    description: 'test',
+    email: 'a@example.invalid',
+    urlReturn: 'https://sklep.test/r',
+    urlStatus: 'https://sklep.test/n',
+    language: $jezyk
+))->toPayload($config)['language'];
+sprawdz('rumunski jest na liscie jezykow P24', 'ro', $zJezykiem('ro'));
+sprawdz('kod jezyka z regionem jest skracany', 'ro', $zJezykiem('ro-RO'));
+
+sekcja('RegisterRequest: adres e-mail nie jest przycinany');
+// P24 odrzuca adresy dluzsze niz 50 znakow (sandbox, 07.10.2026: 50 znakow
+// przechodzi, 51 konczy sie bledem "Invalid email"). Przyciecie dawaloby
+// inny adres, wiec za dlugi adres ma zatrzymac wywolujacy, nie my po cichu.
+$adres50 = str_repeat('a', 38) . '@example.com';
+$adres51 = str_repeat('a', 39) . '@example.com';
+sprawdz('adres testowy ma dokladnie 50 znakow', 50, strlen($adres50));
+sprawdz('adres o 50 znakach miesci sie w limicie', true, RegisterRequest::isEmailAccepted($adres50));
+sprawdz('adres o 51 znakach juz nie', false, RegisterRequest::isEmailAccepted($adres51));
+sprawdz('spacje wokol adresu nie licza sie do limitu', true, RegisterRequest::isEmailAccepted('  ' . $adres50 . '  '));
+sprawdz('pusty adres nie jest sprawa limitu dlugosci', true, RegisterRequest::isEmailAccepted(''));
+
+$zAdresem = static fn (string $adres): string => (new RegisterRequest(
+    sessionId: $sesja,
+    amountInMinorUnits: 100,
+    currency: 'PLN',
+    description: 'test',
+    email: $adres,
+    urlReturn: 'https://sklep.test/r',
+    urlStatus: 'https://sklep.test/n'
+))->toPayload($config)['email'];
+sprawdz('za dlugi adres idzie w calosci, nie przyciety do cudzego', $adres51, $zAdresem($adres51));
+sprawdz('spacje wokol adresu sa obcinane', 'a@example.invalid', $zAdresem('  a@example.invalid '));
+
 sekcja('RegisterRequest: dane platnika (additional.PSU) dla BLIK-a w sklepie');
 $psu = static fn (string $ip, string $ua = ''): array => (new RegisterRequest(
     sessionId: $sesja,
@@ -387,6 +452,14 @@ if ($manifest !== false) {
     sprawdz('nazwa jest niepusta', true, $nazwa !== '');
     sprawdz('grupa wtyczki to hikashoppayment', 'hikashoppayment', (string) $manifest['group']);
     sprawdz('glowny plik wskazany atrybutem plugin', 'przelewy24', (string) $manifest->files->filename[0]['plugin']);
+
+    // Przy odinstalowaniu Joomla kasuje CALY katalog docelowy znacznika
+    // media. Do 1.0.6 byl nim katalog obrazkow platnosci HikaShopa, wiec
+    // odinstalowanie wtyczki usuwalo logotypy wszystkich metod platnosci.
+    $celLogotypow = (string) $manifest->media['destination'];
+    sprawdz('logotypy instaluja sie do wlasnego katalogu wtyczki', 'plg_hikashoppayment_przelewy24', $celLogotypow);
+    sprawdz('znacznik media nie celuje w katalog HikaShopa', false, str_contains($celLogotypow, 'com_hikashop'));
+    sprawdz('kod zwrotow nie jest juz czescia paczki', false, is_file(__DIR__ . '/../plugin/src/Payment/RefundService.php'));
 
     $wersjaManifest = trim((string) $manifest->version);
     $aktualizacje   = simplexml_load_file(__DIR__ . '/../przelewy24_update.xml');
