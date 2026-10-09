@@ -184,6 +184,21 @@ final class WtyczkaTestowa extends Przelewy24
         return $this->returnToken($order);
     }
 
+    public function adresPodziekowania($order): string
+    {
+        return $this->buildThanksUrl($order);
+    }
+
+    /**
+     * Ustawia dopisek adresów tak, jak robi to HikaShop po wczytaniu zamówienia.
+     */
+    public function zDopiskiem(string $dopisek): self
+    {
+        $this->url_itemid = $dopisek;
+
+        return $this;
+    }
+
     /**
      * Strona przejścia do bramki, taka jak po złożeniu zamówienia.
      */
@@ -656,6 +671,37 @@ $ustawStatus('cancelled');
 $r = $wroc($znacznikPowrotu, new TransportAtrapa(poAdresie: [TransportAtrapa::STAN => $stanWP24(0)]));
 wynik('anulowane zamowienie: bez przycisku ponowienia', is_string($r['wynik']) && !str_contains($r['wynik'], 'hikashop_przelewy24_retry') && $r['wtyczka']->przekierowanie === null);
 $ustawStatus('created');
+
+// „Zapłać teraz” z e-maila niesie pozycję menu sklepu albo konta. Gdyby
+// strony płatności ją dziedziczyły, podziękowanie wyświetlałoby się w cudzym
+// układzie, na przykład z boczną kolumną sklepu (serwer testowy, 09.10.2026).
+echo PHP_EOL . '11. Strony platnosci w ukladzie kasy' . PHP_EOL;
+
+$konfiguracja = hikashop_config();
+$kasaWSklepie = $konfiguracja->get('checkout_itemid', 0);
+$zEmaila      = '&order_token=' . $orderToken . '&Itemid=114';
+
+// Zmiana tylko w pamięci tego procesu, konfiguracja sklepu zostaje nietknięta.
+$konfiguracja->set('checkout_itemid', 987);
+
+foreach ([
+    'podziekowanie' => $pomocnik->zDopiskiem($zEmaila)->adresPodziekowania($zamowienie),
+    'powrot'        => $pomocnik->zDopiskiem($zEmaila)->adresPowrotu($zamowienie),
+    'ponowienie'    => $pomocnik->zDopiskiem($zEmaila)->adresPonowienia($zamowienie),
+] as $opis => $adresStrony) {
+    wynik("$opis: pozycja menu kasy z konfiguracji HikaShopa", str_contains($adresStrony, '&Itemid=987') && !str_contains($adresStrony, 'Itemid=114'), $adresStrony);
+    wynik("$opis: pozycja menu podana raz, znacznik goscia zostaje", substr_count($adresStrony, 'Itemid=') === 1 && str_contains($adresStrony, '&order_token=' . $orderToken));
+}
+
+wynik('pozycja menu kasy takze wtedy, gdy klient przyszedl bez zadnej', str_contains($pomocnik->zDopiskiem('')->adresPodziekowania($zamowienie), '&Itemid=987'));
+
+// Sklep bez wskazanej pozycji menu kasy: zostaje ta, z którą klient przyszedł.
+$konfiguracja->set('checkout_itemid', 0);
+wynik('bez ustawienia w HikaShopie zostaje pozycja menu z zadania', str_contains($pomocnik->zDopiskiem($zEmaila)->adresPodziekowania($zamowienie), '&Itemid=114'));
+wynik('bez ustawienia i bez pozycji menu adres zostaje bez niej', !str_contains($pomocnik->zDopiskiem('')->adresPodziekowania($zamowienie), 'Itemid='));
+
+$konfiguracja->set('checkout_itemid', $kasaWSklepie);
+$pomocnik->zDopiskiem('');
 
 echo PHP_EOL . str_repeat('-', 60) . PHP_EOL;
 echo 'Zdane: ' . $zdane . ', niezdane: ' . $bledy . PHP_EOL;

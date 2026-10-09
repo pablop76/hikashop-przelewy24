@@ -1237,7 +1237,30 @@ class Przelewy24 extends \hikashopPaymentPlugin
             . self::CUSTOMER_PAGE
             . '&order_id=' . (int) $order->order_id
             . '&p24_return=' . $this->returnToken($order)
-            . (string) ($this->url_itemid ?? '');
+            . $this->customerUrlSuffix();
+    }
+
+    /**
+     * Dopisek adresów stron, które ogląda klient: znacznik zamówienia
+     * gościa i pozycja menu.
+     *
+     * HikaShop podaje tu pozycję menu, z której klient przyszedł. Przy
+     * zakupie to kasa, ale „Zapłać teraz” z e-maila albo z listy zamówień
+     * niesie pozycję menu sklepu lub konta. Podziękowanie i komunikaty
+     * o płatności wyświetlały się wtedy w cudzym układzie, na przykład
+     * z boczną kolumną sklepu. Gdy w konfiguracji HikaShopa jest wskazana
+     * pozycja menu kasy, strony płatności zawsze jej używają.
+     */
+    protected function customerUrlSuffix()
+    {
+        $suffix = (string) ($this->url_itemid ?? '');
+        $kasa   = \function_exists('hikashop_config') ? (int) hikashop_config()->get('checkout_itemid', 0) : 0;
+
+        if ($kasa <= 0) {
+            return $suffix;
+        }
+
+        return preg_replace('/&Itemid=\d*/', '', $suffix) . '&Itemid=' . $kasa;
     }
 
     /**
@@ -1258,7 +1281,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
     {
         return HIKASHOP_LIVE . 'index.php?option=com_hikashop&ctrl=checkout&task=after_end'
             . '&order_id=' . (int) $order->order_id
-            . (string) ($this->url_itemid ?? '');
+            . $this->customerUrlSuffix();
     }
 
     /**
@@ -1277,7 +1300,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
             . self::CUSTOMER_PAGE
             . '&order_id=' . (int) $order->order_id
             . '&p24_retry=' . $this->retryToken($order)
-            . (string) ($this->url_itemid ?? '');
+            . $this->customerUrlSuffix();
     }
 
     /**
