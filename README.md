@@ -135,19 +135,30 @@ jak po powrocie klienta z bramki. Dzięki temu strona działa także tam, gdzie
 powiadomienia nie dochodzą. Zapłatę nadal potwierdza wyłącznie
 `transaction/verify` wykonane z serwera.
 
-**Powód odrzucenia przychodzi osobnym powiadomieniem.** Po przyjęciu kodu
-`chargeByCode` odpowiada 201 także wtedy, gdy bank za chwilę odmówi, a odrzucona
-transakcja wygląda w `transaction/by/sessionId` tak samo jak trwająca. Dlatego
-przy włączonym BLIK-u w kasie rejestracja niesie `urlCardPaymentNotification`
-(nazwa myląca, to adres powiadomień BLIK). P24 przysyła tam wynik autoryzacji,
-wtyczka sprawdza podpis i zapisuje przyczynę przy zamówieniu. Statusu zamówienia
-to powiadomienie nie zmienia: zamówienie zostaje do opłacenia.
+**Powód odrzucenia może przyjść tylko osobnym powiadomieniem.** Po przyjęciu
+kodu `chargeByCode` odpowiada 201 także wtedy, gdy bank za chwilę odmówi,
+a odrzucona transakcja wygląda w `transaction/by/sessionId` tak samo jak
+trwająca, także godzinę później. Dlatego przy włączonym BLIK-u w kasie
+rejestracja niesie `urlCardPaymentNotification` (nazwa myląca, to adres
+powiadomień BLIK). Według dokumentacji P24 przysyła tam wynik autoryzacji.
+Wtyczka sprawdza podpis i zapisuje przyczynę przy zamówieniu. Statusu
+zamówienia to powiadomienie nie zmienia: zamówienie zostaje do opłacenia.
 
-Kształt tego powiadomienia jest wzięty z dokumentacji i z oficjalnej wtyczki
-P24 dla WooCommerce, bo na komputerze lokalnym powiadomienia nie dochodzą.
-Gdy podpis się nie zgadza, wtyczka zapisuje w dzienniku treść powiadomienia
-bez podpisu, a klient po upływie czasu trafia na stronę powrotu z ogólnym
-komunikatem. Nic poza brakiem konkretnego powodu wtedy nie przepada.
+**Na sandboksie to powiadomienie nie przyszło ani razu** (09.10.2026, serwer
+widoczny z internetu). Nie wysłało go siedem transakcji: odrzucone i udane,
+zarejestrowane bez metody i z metodą 181, tak jak robi to oficjalna wtyczka
+P24 dla WooCommerce. Zwykłe powiadomienie o wpłacie dochodziło w tym samym
+czasie bez przeszkód. Dopóki P24 nie wysyła powiadomień BLIK, odrzucona
+płatność kończy się więc limitem 150 sekund albo kliknięciem „Sprawdź, czy
+płatność doszła” i ogólnym komunikatem z ponowieniem. Oficjalna wtyczka ma
+na tę okoliczność taki sam zapas, 120 sekund. Czy powiadomienia trzeba
+włączyć na koncie, wie wsparcie P24.
+
+Kształt powiadomienia jest wzięty z dokumentacji i z oficjalnej wtyczki, bo
+prawdziwego nie udało się zobaczyć. Gdy podpis się nie zgadza, wtyczka zapisuje
+w dzienniku treść powiadomienia bez podpisu, a klient po upływie czasu trafia
+na stronę powrotu z ogólnym komunikatem. Nic poza brakiem konkretnego powodu
+wtedy nie przepada.
 
 ### Raty
 
