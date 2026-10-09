@@ -141,7 +141,7 @@ foreach (BlikError::cases() as $przyczyna) {
 
 wynik('kazda przyczyna ma komunikat po polsku', [], $brakujacePl);
 wynik('kazda przyczyna ma komunikat po angielsku', [], $brakujaceEn);
-wynik('przyczyn jest tyle, ile obslugujemy', 14, count(BlikError::cases()));
+wynik('przyczyn jest tyle, ile obslugujemy', 15, count(BlikError::cases()));
 
 echo PHP_EOL . '6. Tresc zadania wyslanego do P24' . PHP_EOL;
 

@@ -13,6 +13,8 @@ use Joomla\CMS\Language\Text;
 use Joomla\CMS\Uri\Uri;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Amount;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\ApiClient;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\BlikError;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\BlikNotification;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\BlikService;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Config;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\ApiException;
@@ -66,7 +68,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
     /**
      * Wersja wtyczki, wysyłana do P24 w nagłówku diagnostycznym.
      */
-    public const VERSION = '1.0.8';
+    public const VERSION = '1.0.9';
 
     protected $autoloadLanguage = true;
 
@@ -126,6 +128,21 @@ class Przelewy24 extends \hikashopPaymentPlugin
      * @var bool
      */
     public $p24_blik_pending = false;
+
+    /**
+     * Adres, pod którym strona oczekiwania pyta sklep o wynik płatności BLIK.
+     *
+     * @var string
+     */
+    public $p24_blik_status_url = '';
+
+    /**
+     * Adres, na który strona oczekiwania przechodzi, gdy czas minie albo
+     * klient sam chce sprawdzić, czy płatność doszła.
+     *
+     * @var string
+     */
+    public $p24_blik_check_url = '';
 
     /**
      * Komunikat o odrzuconej płatności BLIK.
@@ -287,6 +304,11 @@ class Przelewy24 extends \hikashopPaymentPlugin
             }
         }
 
+        if ($this->p24_blik_pending) {
+            $this->p24_blik_status_url = $this->buildBlikStatusUrl($order);
+            $this->p24_blik_check_url  = $this->buildReturnUrl($order);
+        }
+
         return $this->showPage('end');
     }
 
@@ -431,7 +453,8 @@ class Przelewy24 extends \hikashopPaymentPlugin
                 method: $config->paymentMethodId > 0 ? $config->paymentMethodId : null,
                 // Dane płatnika potrzebne tylko do BLIK-a w sklepie
                 clientIp: $config->blikInShop ? $this->clientIp() : '',
-                clientUserAgent: $config->blikInShop ? $this->clientUserAgent() : ''
+                clientUserAgent: $config->blikInShop ? $this->clientUserAgent() : '',
+                urlBlikNotification: $config->blikInShop ? $this->buildBlikNotifyUrl($order) : ''
             ));
 
             $this->p24_token       = $token;
@@ -502,6 +525,16 @@ class Przelewy24 extends \hikashopPaymentPlugin
         // podziękujemy za zamówienie, pytamy P24, jak było naprawdę.
         if ($akcja === 'return') {
             return $this->handleReturn();
+        }
+
+        // Strona oczekiwania na potwierdzenie BLIK pyta tędy o wynik.
+        if ($akcja === 'blik_status') {
+            return $this->handleBlikStatus();
+        }
+
+        // Dodatkowe powiadomienie BLIK: wynik autoryzacji w banku.
+        if ($akcja === 'blik_notify') {
+            return $this->handleBlikNotification();
         }
 
         $orderId  = (int) $input->get('order_id', 0, 'int');
@@ -1241,6 +1274,50 @@ class Przelewy24 extends \hikashopPaymentPlugin
     }
 
     /**
+     * Adres, na który P24 przysyła wynik autoryzacji BLIK w banku.
+     *
+     * Ten sam znacznik co przy zwykłym powiadomieniu: oba adresy zna
+     * tylko P24 i oba prowadzą do sprawdzenia podpisu.
+     */
+    protected function buildBlikNotifyUrl($order)
+    {
+        return HIKASHOP_LIVE . 'index.php?option=com_hikashop&ctrl=checkout&task=notify'
+            . '&notif_payment=' . $this->name
+            . '&p24_action=blik_notify'
+            . '&tmpl=component'
+            . '&lang=' . urlencode((string) ($this->locale ?? ''))
+            . '&order_id=' . (int) $order->order_id
+            . '&order_token=' . md5((string) $order->order_token);
+    }
+
+    /**
+     * Adres, pod którym strona oczekiwania pyta o wynik płatności BLIK.
+     *
+     * Bez dopisku CUSTOMER_PAGE i celowo: odpowiedzią jest JSON dla skryptu,
+     * a wtyczka systemowa HikaShopa oddaje wynik zadania notify bez szablonu
+     * witryny. Adres jest względny, żeby pytanie zawsze szło do tej samej
+     * domeny, z której klient ogląda stronę.
+     */
+    protected function buildBlikStatusUrl($order)
+    {
+        return Uri::root(true) . '/index.php?option=com_hikashop&ctrl=checkout&task=notify'
+            . '&notif_payment=' . $this->name
+            . '&p24_action=blik_status'
+            . '&tmpl=component&format=raw'
+            . '&lang=' . urlencode((string) ($this->locale ?? ''))
+            . '&order_id=' . (int) $order->order_id
+            . '&p24_status=' . $this->statusToken($order);
+    }
+
+    /**
+     * Znacznik adresu pytania o wynik płatności BLIK, osobny od pozostałych.
+     */
+    protected function statusToken($order)
+    {
+        return hash_hmac('sha256', 'p24-status|' . (int) $order->order_id, (string) ($order->order_token ?? ''));
+    }
+
+    /**
      * Dopisek adresów stron, które ogląda klient: znacznik zamówienia
      * gościa i pozycja menu.
      *
@@ -1473,10 +1550,233 @@ class Przelewy24 extends \hikashopPaymentPlugin
             $this->p24_error     = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_RETRY_UNAVAILABLE');
             $this->p24_retry_url = '';
         } else {
-            $this->p24_unpaid_notice = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_RETURN_UNPAID');
+            // Po kodzie BLIK wpisanym w kasie bank potrafi powiedzieć, czemu
+            // odmówił. Klient czyta wtedy konkret, a nie ogólnik.
+            $odrzucenie = $this->blikRejection($dbOrder);
+
+            $this->p24_unpaid_notice = $odrzucenie !== null
+                ? Text::_($odrzucenie->languageKey())
+                : Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_RETURN_UNPAID');
         }
 
         return $this->renderPage('end');
+    }
+
+    /**
+     * Odpowiada stronie oczekiwania, jak skończyła się płatność kodem BLIK.
+     *
+     * Po przyjęciu kodu klient zostaje w sklepie i potwierdza płatność
+     * w aplikacji banku. Do wersji 1.0.8 strona oczekiwania stała w miejscu:
+     * klient potwierdzał, zamówienie się opłacało, a on dalej czytał
+     * „Potwierdź płatność w aplikacji banku” (serwer testowy, 09.10.2026).
+     *
+     * Odpowiedź to JSON z polem state:
+     *
+     * - paid: zapłata potwierdzona, w redirect adres podziękowania
+     * - failed: bank odrzucił płatność, w redirect strona z powodem i ponowieniem
+     * - check: sprawa wymaga strony powrotu (wpłata bez weryfikacji, zła kwota,
+     *   zamówienie zamknięte), w redirect jej adres
+     * - waiting: jeszcze nic nie wiadomo
+     * - invalid: błędny znacznik albo nieznane zamówienie
+     *
+     * Zwykle zapłatę potwierdza powiadomienie z P24 i wtedy wystarcza odczyt
+     * zamówienia z bazy. P24 pytamy tylko na prośbę skryptu (p24_ask), który
+     * robi to rzadziej niż samo odpytywanie. To nadal nie jest uznawanie
+     * zapłaty na słowo przeglądarki: stan podaje P24 w odpowiedzi na pytanie
+     * z serwera, a status zamówienia zmienia wyłącznie udane transaction/verify.
+     */
+    protected function handleBlikStatus()
+    {
+        $input   = Factory::getApplication()->getInput();
+        $orderId = (int) $input->get('order_id', 0, 'int');
+        $token   = (string) $input->get('p24_status', '', 'string');
+
+        $dbOrder = $this->getOrder($orderId);
+
+        if (empty($dbOrder)
+            || !$this->loadPaymentParams($dbOrder)
+            || !hash_equals($this->statusToken($dbOrder), $token)
+        ) {
+            return $this->jsonReply(['state' => 'invalid']);
+        }
+
+        $config = Config::fromPaymentParams($this->payment_params);
+        $logger = $this->buildLogger($config);
+
+        $this->loadOrderData($dbOrder);
+
+        if ($this->isAlreadyPaid($dbOrder, $config)) {
+            return $this->jsonReply(['state' => 'paid', 'redirect' => $this->buildThanksUrl($dbOrder)]);
+        }
+
+        if ($this->blikRejection($dbOrder) !== null) {
+            return $this->jsonReply(['state' => 'failed', 'redirect' => $this->buildReturnUrl($dbOrder)]);
+        }
+
+        if (\in_array((string) ($dbOrder->order_status ?? ''), $this->closedStatuses(), true)) {
+            return $this->jsonReply(['state' => 'check', 'redirect' => $this->buildReturnUrl($dbOrder)]);
+        }
+
+        $sessionId = OrderPaymentData::getString($dbOrder, OrderPaymentData::SESSION_ID);
+
+        if ($sessionId === '' || $input->getInt('p24_ask', 0) !== 1) {
+            return $this->jsonReply(['state' => 'waiting']);
+        }
+
+        try {
+            $config->assertComplete();
+
+            // Tylko bieżąca sesja, czyli ta obciążona kodem. Wcześniejsze
+            // sprawdzi strona powrotu, gdy klient na nią trafi.
+            $wP24 = $this->settleSession(
+                $dbOrder,
+                $sessionId,
+                $config,
+                $logger,
+                $this->buildService($config, $logger),
+                Amount::toMinorUnit($dbOrder->order_full_price, $this->currencyFractionDigits()),
+                $this->currencyCode()
+            );
+        } catch (Throwable $exception) {
+            // Chwilowy brak odpowiedzi P24 niczego nie rozstrzyga: skrypt
+            // zapyta jeszcze raz, a w ostateczności klient trafi na stronę
+            // powrotu, która ma na to własny komunikat.
+            $logger->error('Nie udało się sprawdzić w P24 wyniku płatności BLIK', [
+                'order_id' => $orderId,
+                'powod'    => $exception->getMessage(),
+            ]);
+
+            return $this->jsonReply(['state' => 'waiting']);
+        }
+
+        if ($wP24 === self::P24_CONFIRMED) {
+            return $this->jsonReply(['state' => 'paid', 'redirect' => $this->buildThanksUrl($dbOrder)]);
+        }
+
+        if ($wP24 === self::P24_UNPAID) {
+            return $this->jsonReply(['state' => 'waiting']);
+        }
+
+        return $this->jsonReply(['state' => 'check', 'redirect' => $this->buildReturnUrl($dbOrder)]);
+    }
+
+    /**
+     * Przyjmuje dodatkowe powiadomienie BLIK z wynikiem autoryzacji w banku.
+     *
+     * Zapisuje przy zamówieniu przyczynę odrzucenia, żeby strona oczekiwania
+     * mogła od razu powiedzieć klientowi, co się stało. Statusu zamówienia
+     * nie zmienia: zamówienie zostaje do opłacenia, a klient może ponowić.
+     * Powodzenia też nie przyjmuje za zapłatę, od tego jest powiadomienie
+     * na urlStatus i transaction/verify.
+     */
+    protected function handleBlikNotification()
+    {
+        $input    = Factory::getApplication()->getInput();
+        $orderId  = (int) $input->get('order_id', 0, 'int');
+        $urlToken = (string) $input->get('order_token', '', 'string');
+
+        $dbOrder = $this->getOrder($orderId);
+
+        if (empty($dbOrder) || !$this->loadPaymentParams($dbOrder)) {
+            $this->writeToLog('P24 [BŁĄD] Powiadomienie BLIK dla nieznanego zamówienia | order_id=' . $orderId);
+
+            return false;
+        }
+
+        $config = Config::fromPaymentParams($this->payment_params);
+        $logger = $this->buildLogger($config);
+
+        if (!hash_equals(md5((string) $dbOrder->order_token), $urlToken)) {
+            $logger->error('Powiadomienie BLIK z błędnym znacznikiem zamówienia', ['order_id' => $orderId]);
+
+            return false;
+        }
+
+        $body = $this->readNotificationBody();
+
+        try {
+            $powiadomienie = BlikNotification::fromRequestBody($body);
+            $powiadomienie->assertValid($config, OrderPaymentData::sessionsOf($dbOrder));
+        } catch (SignatureException $exception) {
+            $logger->error('Powiadomienie BLIK odrzucone', [
+                'order_id' => $orderId,
+                'powod'    => $exception->getMessage(),
+                'tresc'    => BlikNotification::describeBody($body),
+            ]);
+
+            return false;
+        }
+
+        $logger->info('Powiadomienie BLIK przyjęte', ['order_id' => $orderId] + $powiadomienie->toLogContext());
+
+        $zapisanaSesja = OrderPaymentData::getString($dbOrder, OrderPaymentData::BLIK_ERROR_SESSION);
+        $zapisanyBlad  = OrderPaymentData::getString($dbOrder, OrderPaymentData::BLIK_ERROR);
+
+        if (!$powiadomienie->hasError()) {
+            // Bank przyjął płatność. Wcześniejsze odrzucenie tej samej
+            // sesji przestaje obowiązywać.
+            if ($zapisanyBlad !== '' && $zapisanaSesja === $powiadomienie->sessionId) {
+                OrderPaymentData::store($orderId, [
+                    OrderPaymentData::BLIK_ERROR         => '',
+                    OrderPaymentData::BLIK_ERROR_SESSION => '',
+                ]);
+            }
+
+            return 'OK';
+        }
+
+        $przyczyna = $powiadomienie->reason();
+
+        // P24 potrafi powtórzyć powiadomienie. Zapis tylko przy zmianie,
+        // bo każdy dokłada wpis w historii zamówienia.
+        if ($zapisanyBlad !== $przyczyna->value || $zapisanaSesja !== $powiadomienie->sessionId) {
+            OrderPaymentData::store($orderId, [
+                OrderPaymentData::BLIK_ERROR         => $przyczyna->value,
+                OrderPaymentData::BLIK_ERROR_SESSION => $powiadomienie->sessionId,
+            ]);
+        }
+
+        $logger->warning('Bank odrzucił płatność BLIK', [
+            'order_id' => $orderId,
+            'powod'    => $przyczyna->value,
+        ]);
+
+        return 'OK';
+    }
+
+    /**
+     * Przyczyna, dla której bank odrzucił bieżącą próbę zapłaty kodem BLIK.
+     *
+     * Liczy się tylko odrzucenie bieżącej sesji. Po ponowieniu zamówienie
+     * ma nową sesję i stara przyczyna nie może straszyć klienta.
+     */
+    protected function blikRejection($order): ?BlikError
+    {
+        if (!\is_object($order)) {
+            return null;
+        }
+
+        $blad  = OrderPaymentData::getString($order, OrderPaymentData::BLIK_ERROR);
+        $sesja = OrderPaymentData::getString($order, OrderPaymentData::BLIK_ERROR_SESSION);
+
+        if ($blad === '' || $sesja === '' || $sesja !== OrderPaymentData::getString($order, OrderPaymentData::SESSION_ID)) {
+            return null;
+        }
+
+        return BlikError::tryFrom($blad);
+    }
+
+    /**
+     * Odpowiedź w JSON-ie dla skryptu strony oczekiwania.
+     */
+    protected function jsonReply(array $dane)
+    {
+        if (!headers_sent()) {
+            header('Content-Type: application/json; charset=utf-8');
+            header('Cache-Control: no-store');
+        }
+
+        return (string) json_encode($dane, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
     /**

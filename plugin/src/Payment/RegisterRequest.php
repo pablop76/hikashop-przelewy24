@@ -41,6 +41,7 @@ final class RegisterRequest
      * @param  int     $timeLimit           limit w minutach, 0 oznacza limit P24
      * @param  string  $clientIp            IP klienta, wysyłane jako additional.PSU
      * @param  string  $clientUserAgent     przeglądarka klienta, jw.
+     * @param  string  $urlBlikNotification adres dodatkowego powiadomienia BLIK
      */
     public function __construct(
         public readonly string $sessionId,
@@ -60,7 +61,8 @@ final class RegisterRequest
         public readonly int $timeLimit = 0,
         public readonly ?int $method = null,
         public readonly string $clientIp = '',
-        public readonly string $clientUserAgent = ''
+        public readonly string $clientUserAgent = '',
+        public readonly string $urlBlikNotification = ''
     ) {
     }
 
@@ -132,6 +134,13 @@ final class RegisterRequest
             }
 
             $payload['additional'] = ['PSU' => $psu];
+        }
+
+        // Na ten adres P24 przysyła wynik autoryzacji BLIK w banku. Bez
+        // niego sklep nie dowie się, że bank odrzucił płatność po przyjęciu
+        // kodu. Nazwa pola jest myląca: dla kart służy urlNotify.
+        if (trim($this->urlBlikNotification) !== '') {
+            $payload['urlCardPaymentNotification'] = trim($this->urlBlikNotification);
         }
 
         return $payload;

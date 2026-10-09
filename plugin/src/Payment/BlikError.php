@@ -28,6 +28,7 @@ enum BlikError: string
     case IssuerDeclined    = 'issuer_declined';
     case BadPin            = 'bad_pin';
     case UserTimeout       = 'user_timeout';
+    case UserDeclined      = 'user_declined';
     case Timeout           = 'timeout';
     case AliasDeclined     = 'alias_declined';
     case AliasNotFound     = 'alias_not_found';
@@ -68,6 +69,37 @@ enum BlikError: string
         70 => 'user_timeout',
         71 => 'general_error',
         72 => 'timeout',
+        100 => 'system_error',
+    ];
+
+    /**
+     * Odwzorowanie nazw, którymi system BLIK opisuje odrzucenie.
+     *
+     * Kolejność ma znaczenie: nazwy są szukane w tekście, a TIMEOUT zawiera
+     * się w USER_TIMEOUT i AM_TIMEOUT, więc dłuższe stoją wyżej.
+     *
+     * @var array<string, string>
+     */
+    private const SYMBOLS = [
+        'ER_WRONG_TICKET'    => 'wrong_code',
+        'ER_TIC_EXPIRED'     => 'code_expired',
+        'ER_TIC_STS'         => 'code_status',
+        'ER_TIC_USED'        => 'code_used',
+        'INSUFFICIENT_FUNDS' => 'insufficient_funds',
+        'LIMIT_EXCEEDED'     => 'limit_exceeded',
+        'ER_DATAAMT_HUGE'    => 'limit_exceeded',
+        'ISSUER_DECLINED'    => 'issuer_declined',
+        'SEC_DECLINED'       => 'issuer_declined',
+        'BAD_PIN'            => 'bad_pin',
+        'USER_TIMEOUT'       => 'user_timeout',
+        'AM_TIMEOUT'         => 'timeout',
+        'USER_DECLINED'      => 'user_declined',
+        'ALIAS_DECLINED'     => 'alias_declined',
+        'ALIAS_NOT_FOUND'    => 'alias_not_found',
+        'TAS_DECLINED'       => 'system_error',
+        'ISS_OUTOFSERVICE'   => 'system_error',
+        'SYSTEM_ERROR'       => 'system_error',
+        'TIMEOUT'            => 'timeout',
     ];
 
     public static function fromCode(mixed $code): self
@@ -79,6 +111,33 @@ enum BlikError: string
         $nazwa = self::CODES[(int) $code] ?? null;
 
         return $nazwa === null ? self::GeneralError : (self::tryFrom($nazwa) ?? self::GeneralError);
+    }
+
+    /**
+     * Przyczyna odrzucenia z dodatkowego powiadomienia BLIK.
+     *
+     * Powiadomienie niesie pole error i komunikat. P24 nie opisuje, czy
+     * w polu error stoi numer, czy nazwa, a oficjalna wtyczka dla
+     * WooCommerce przyjmuje jedno i drugie. Robimy tak samo: najpierw
+     * numer, potem nazwa szukana w obu polach.
+     */
+    public static function fromNotification(string $error, string $message = ''): self
+    {
+        $error = trim($error);
+
+        if (is_numeric($error) && isset(self::CODES[(int) $error])) {
+            return self::fromCode($error);
+        }
+
+        $tekst = strtoupper($error . ' ' . $message);
+
+        foreach (self::SYMBOLS as $nazwa => $przyczyna) {
+            if (str_contains($tekst, $nazwa)) {
+                return self::tryFrom($przyczyna) ?? self::GeneralError;
+            }
+        }
+
+        return self::GeneralError;
     }
 
     /**

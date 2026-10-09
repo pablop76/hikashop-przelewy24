@@ -39,6 +39,12 @@ final class OrderPaymentData
     /** Sesja, której wpłatę zweryfikowaliśmy. */
     public const PAID_SESSION = 'p24_paid_session';
 
+    /** Przyczyna odrzucenia płatności BLIK, zgłoszona przez bank. */
+    public const BLIK_ERROR = 'p24_blik_error';
+
+    /** Sesja, której to odrzucenie dotyczy. */
+    public const BLIK_ERROR_SESSION = 'p24_blik_error_session';
+
     /** Ile wcześniejszych sesji pamiętamy przy zamówieniu. */
     public const SESSIONS_LIMIT = 10;
 

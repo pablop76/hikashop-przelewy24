@@ -112,9 +112,42 @@ zamiast próbować ponownie.
 albo błędnym kodzie prosimy o nowy. Przy braku środków czy odmowie banku nowy
 kod niczego nie zmieni, więc od razu kierujemy klienta do innej metody.
 
-Strona oczekiwania na potwierdzenie **nie odpytuje P24 i nie odświeża się**.
-Zapłatę potwierdza powiadomienie wysłane przez P24 na serwer, a nie cokolwiek,
-co dzieje się w przeglądarce klienta.
+#### Strona oczekiwania na potwierdzenie
+
+Po przyjęciu kodu klient widzi „Potwierdź płatność w aplikacji banku”.
+Od 1.0.9 ta strona sama sprawdza wynik i przechodzi dalej:
+
+- zapłata potwierdzona: podziękowanie za zamówienie,
+- bank odrzucił płatność: strona „Płatność nie została potwierdzona”
+  z powodem odrzucenia i przyciskiem ponowienia,
+- po 150 sekundach bez rozstrzygnięcia: ta sama strona powrotu, która pyta
+  P24 ostatni raz.
+
+Do 1.0.8 strona stała w miejscu. Klient potwierdzał płatność, zamówienie się
+opłacało, a on dalej czytał, że ma potwierdzić. Po odrzuceniu w banku czekał
+bez końca.
+
+Skrypt strony o niczym nie decyduje. Co dwie sekundy pyta sklep
+(`p24_action=blik_status`), a sklep odczytuje zamówienie z bazy: zwykle zdąża
+je opłacić powiadomienie z P24. Dopiero po ośmiu sekundach, a potem co
+dziesięć, sklep pyta też P24 o stan transakcji i opłaconą weryfikuje, tak samo
+jak po powrocie klienta z bramki. Dzięki temu strona działa także tam, gdzie
+powiadomienia nie dochodzą. Zapłatę nadal potwierdza wyłącznie
+`transaction/verify` wykonane z serwera.
+
+**Powód odrzucenia przychodzi osobnym powiadomieniem.** Po przyjęciu kodu
+`chargeByCode` odpowiada 201 także wtedy, gdy bank za chwilę odmówi, a odrzucona
+transakcja wygląda w `transaction/by/sessionId` tak samo jak trwająca. Dlatego
+przy włączonym BLIK-u w kasie rejestracja niesie `urlCardPaymentNotification`
+(nazwa myląca, to adres powiadomień BLIK). P24 przysyła tam wynik autoryzacji,
+wtyczka sprawdza podpis i zapisuje przyczynę przy zamówieniu. Statusu zamówienia
+to powiadomienie nie zmienia: zamówienie zostaje do opłacenia.
+
+Kształt tego powiadomienia jest wzięty z dokumentacji i z oficjalnej wtyczki
+P24 dla WooCommerce, bo na komputerze lokalnym powiadomienia nie dochodzą.
+Gdy podpis się nie zgadza, wtyczka zapisuje w dzienniku treść powiadomienia
+bez podpisu, a klient po upływie czasu trafia na stronę powrotu z ogólnym
+komunikatem. Nic poza brakiem konkretnego powodu wtedy nie przepada.
 
 ### Raty
 
@@ -409,8 +442,16 @@ i `status: success`, a nie błąd. Przed dublowaniem musi więc chronić sklep.
 
 **Nie każde powodzenie to kod 200.** Rejestracja i weryfikacja odpowiadają
 200, ale `transaction/refund` odpowiada 201, a pole `data` jest wtedy listą
-pozycji. Specyfikacja podaje 201 także dla `blik/chargeByCode`. Wtyczka
-uznaje za powodzenie oba kody.
+pozycji. `blik/chargeByCode` też odpowiada 201 (potwierdzone 09.10.2026).
+Wtyczka uznaje za powodzenie oba kody.
+
+**BLIK w sklepie na sandboksie.** Kod `777XXX` jest przyjmowany i transakcja
+od razu ma stan 1, bez aplikacji banku. Inny kod kończy się `HTTP 400`
+z kodem 28 („Incorrect ticket!”). Kwota transakcji wymusza odrzucenie w banku,
+na przykład 5,99 zł brak środków, 81,88 zł zły PIN, 8,99 zł upływ czasu
+(tabelę kwot podaje wsparcie P24). Przy takiej kwocie `chargeByCode` nadal
+odpowiada 201, a stan transakcji zostaje 0. Do próby udanej trzeba więc brać
+kwotę spoza tabeli. Sprawdzone 09.10.2026.
 
 **Kwota musi być liczbą całkowitą także w zapisie JSON.** Wartość
 `1998.9999999999998` kończy się błędem `400 Invalid amount`.
@@ -443,6 +484,7 @@ tests/
   joomla.php                     wtyczka w zainstalowanej Joomli
   notification.php               ścieżka powiadomienia
   blik.php                       BLIK w kasie
+  blik-oczekiwanie.php           strona oczekiwania BLIK i powiadomienie o odrzuceniu
   duplikaty.php                  ochrona przed podwójną zapłatą
   bootstrap-joomla.php           wspólny rozruch testów integracyjnych
 ```
@@ -476,7 +518,7 @@ ani od Joomli poza klientem HTTP.
 
 ## Testy
 
-Osiem zestawów, każdy o innym zasięgu.
+Dziewięć zestawów, każdy o innym zasięgu.
 
 ```bash
 php tests/run.php          # biblioteka, bez Joomli i bez sieci
@@ -484,6 +526,7 @@ php tests/sandbox.php      # prawdziwe API P24, wymaga danych sandboxa
 php tests/joomla.php       # wtyczka w zainstalowanej Joomli z HikaShopem
 php tests/notification.php # sciezka powiadomienia, siec podstawiona atrapa
 php tests/blik.php         # BLIK w kasie, siec podstawiona atrapa
+php tests/blik-oczekiwanie.php # strona oczekiwania BLIK i powiadomienie o odrzuceniu, siec podstawiona atrapa
 php tests/duplikaty.php    # sesje zamowienia i ochrona przed podwojna zaplata, zywe P24
 php tests/retry.php        # ponowienie zaplaty, powrot z bramki i wplata, o ktorej sklep nie wie, siec podstawiona atrapa
 php tests/email.php        # adres e-mail klienta, takze goscia

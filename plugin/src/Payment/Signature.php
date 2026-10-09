@@ -90,6 +90,30 @@ final class Signature
     }
 
     /**
+     * Podpis dodatkowego powiadomienia BLIK (urlCardPaymentNotification).
+     *
+     * Pole result wchodzi do podpisu w całości, tak jak przyszło, więc
+     * o kolejności jego kluczy decyduje wywołujący.
+     *
+     * @param  array<string, mixed>  $result
+     */
+    public static function forBlikNotification(
+        int $p24OrderId,
+        string $sessionId,
+        int $methodId,
+        array $result,
+        string $crc
+    ): string {
+        return self::hash([
+            'orderId'   => $p24OrderId,
+            'sessionId' => $sessionId,
+            'method'    => $methodId,
+            'result'    => $result,
+            'crc'       => $crc,
+        ]);
+    }
+
+    /**
      * Podpis formularza karty osadzanego w sklepie.
      */
     public static function forCardForm(int $merchantId, string $sessionId, string $crc): string
