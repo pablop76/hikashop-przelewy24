@@ -295,6 +295,12 @@ Adresy, które otwiera klient (powrót i ponowienie), niosą parametr
 przechwytuje zadanie `notify` i oddaje wynik bez szablonu witryny, czyli
 goły tekst na białym tle. Adres powiadomień dla P24 tego parametru nie ma.
 
+Te same adresy i strona podziękowania używają pozycji menu kasy wskazanej
+w konfiguracji HikaShopa (`checkout_itemid`), a nie tej, z którą klient
+przyszedł. „Zapłać teraz” z e-maila niesie pozycję menu sklepu albo konta
+i bez tego podziękowanie wyświetlało się w ich układzie, na przykład z boczną
+kolumną. Gdy sklep nie wskazał pozycji menu kasy, zostaje ta z żądania.
+
 **Ponowienie zapłaty bez płatnego HikaShopa.** Gdy płatność nie ruszy,
 klient widzi przycisk „Spróbuj zapłacić ponownie”. Do wersji 1.0.3 prowadził
 do kasy, a ta po złożeniu zamówienia jest pusta. Własne „zapłać teraz”
