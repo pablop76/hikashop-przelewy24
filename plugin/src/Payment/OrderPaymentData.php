@@ -33,6 +33,15 @@ final class OrderPaymentData
     /** Chwila, w której sprzedawca dostał alert o nieudanej weryfikacji. */
     public const VERIFY_ALERT_AT = 'p24_verify_alert_at';
 
+    /** Wcześniejsze sesje płatności zamówienia, od najstarszej. */
+    public const SESSIONS = 'p24_sessions';
+
+    /** Sesja, której wpłatę zweryfikowaliśmy. */
+    public const PAID_SESSION = 'p24_paid_session';
+
+    /** Ile wcześniejszych sesji pamiętamy przy zamówieniu. */
+    public const SESSIONS_LIMIT = 10;
+
     private function __construct()
     {
     }
@@ -126,49 +135,112 @@ final class OrderPaymentData
     }
 
     /**
-     * Zapisuje dane próby zapłaty i zwiększa licznik prób.
+     * Zapisuje nową próbę zapłaty: jej sesję, kwotę i licznik prób.
      *
-     * Identyfikator sesji NIE jest tu nadpisywany nowym, jeżeli przy
-     * zamówieniu już jakiś jest. Powód jest poważny: nowy identyfikator
-     * zakłada w P24 drugą, osobną transakcję, więc klient może zapłacić
-     * dwa razy za to samo zamówienie. Dodatkowo powiadomienie o pierwszej
-     * zapłacie przestaje pasować do tego, co mamy zapisane, i zostaje
-     * odrzucone jako dotyczące obcej sesji.
+     * Każda próba ma własną sesję, czyli własną transakcję w P24. Po
+     * nieudanej płatności P24 nie pozwala dokończyć tej samej transakcji:
+     * jej strona płatności od razu odsyła klienta do sklepu. Sprawdzone na
+     * sandboksie 09.10.2026.
      *
-     * Ponowna rejestracja z tym samym identyfikatorem jest bezpieczna:
-     * P24 zwraca wtedy ten sam token i prowadzi klienta do tej samej
-     * transakcji. Sprawdzone na sandboksie 23.09.2026.
+     * Sesja poprzedniej próby nie przepada, tylko przechodzi na listę
+     * wcześniejszych. Wpłata za nią może jeszcze nadejść (przelew
+     * tradycyjny, odnośnik z wiadomości P24) i powiadomienie o niej musi
+     * pasować do zamówienia. Przed dublowaniem zapłaty chroni pytanie do
+     * P24 o wszystkie sesje zamówienia, zadawane przed każdą nową próbą.
+     *
+     * Stan czytamy świeżo z bazy, a nie z obiektu zamówienia w pamięci, żeby
+     * dwie próby rozpoczęte jedna po drugiej nie zgubiły sobie nawzajem sesji.
      */
     public static function startAttempt(
         int $orderId,
         string $sessionId,
         int $amountInMinorUnits,
-        string $currency,
-        int $previousAttempts
+        string $currency
     ): bool {
+        $zapisane = self::fresh($orderId);
+
         return self::store($orderId, [
             self::SESSION_ID => $sessionId,
+            self::SESSIONS   => self::earlierSessions($zapisane, $sessionId),
             self::AMOUNT     => $amountInMinorUnits,
             self::CURRENCY   => $currency,
-            self::ATTEMPTS   => $previousAttempts + 1,
+            self::ATTEMPTS   => self::getInt($zapisane, self::ATTEMPTS) + 1,
         ]);
     }
 
     /**
-     * Zwraca identyfikator sesji zamówienia, tworząc go przy pierwszej próbie.
+     * Wszystkie sesje płatności zamówienia, od najnowszej.
      *
-     * Jeden identyfikator na zamówienie, nie na próbę. Losowa część
-     * chroni przed odgadnięciem, a stałość w czasie przed zdublowaniem
-     * płatności.
+     * @return list<string>
      */
-    public static function sessionIdFor(?object $order, int $orderId): string
+    public static function sessionsOf(?object $order): array
     {
-        $zapisany = self::getString($order, self::SESSION_ID);
+        $sesje = array_reverse(self::history($order));
 
-        if ($zapisany !== '' && SessionId::isValid($zapisany)) {
-            return $zapisany;
+        array_unshift($sesje, self::getString($order, self::SESSION_ID));
+
+        return array_values(array_unique(array_filter($sesje, [SessionId::class, 'isValid'])));
+    }
+
+    /**
+     * Lista wcześniejszych sesji po rozpoczęciu nowej próby, od najstarszej.
+     *
+     * Dotychczasowa bieżąca sesja dołącza do listy. Najstarsze wpisy ponad
+     * limit odpadają: wpłata za próbę sprzed kilkunastu ponowień nie zostanie
+     * już przypisana do zamówienia i P24 zwróci ją klientowi.
+     *
+     * @return list<string>
+     */
+    public static function earlierSessions(?object $order, string $newSessionId): array
+    {
+        $sesje   = self::history($order);
+        $sesje[] = self::getString($order, self::SESSION_ID);
+
+        $sesje = array_values(array_unique(array_filter(
+            $sesje,
+            static fn (string $sesja): bool => $sesja !== $newSessionId && SessionId::isValid($sesja)
+        )));
+
+        return \array_slice($sesje, -self::SESSIONS_LIMIT);
+    }
+
+    /**
+     * Zapisana lista wcześniejszych sesji, bez sprawdzania poprawności.
+     *
+     * @return list<string>
+     */
+    private static function history(?object $order): array
+    {
+        $zapisane = self::get($order, self::SESSIONS, []);
+
+        if (\is_object($zapisane)) {
+            $zapisane = (array) $zapisane;
         }
 
-        return SessionId::generate($orderId);
+        if (!\is_array($zapisane)) {
+            return [];
+        }
+
+        return array_values(array_map('strval', array_filter($zapisane, 'is_scalar')));
+    }
+
+    /**
+     * Zamówienie odczytane świeżo z bazy.
+     */
+    private static function fresh(int $orderId): ?object
+    {
+        if ($orderId <= 0 || !\function_exists('hikashop_get')) {
+            return null;
+        }
+
+        $orderClass = hikashop_get('class.order');
+
+        if (!\is_object($orderClass)) {
+            return null;
+        }
+
+        $order = $orderClass->get($orderId);
+
+        return \is_object($order) ? $order : null;
     }
 }

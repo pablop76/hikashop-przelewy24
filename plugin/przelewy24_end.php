@@ -28,6 +28,14 @@ $retryUrl   = (string) $this->p24_retry_url;
 $blikPending = (bool) $this->p24_blik_pending;
 $blikError   = (string) $this->p24_blik_error;
 $paidNotice  = (string) ($this->p24_paid_notice ?? '');
+$unpaidNotice = (string) ($this->p24_unpaid_notice ?? '');
+
+// Przycisk prowadzi przez sklep, a nie wprost na stronę płatności P24.
+// Klient klika go zwykle po powrocie z bramki przyciskiem „wstecz”, czyli
+// po próbie, która się nie udała. Zapisany tu adres strony płatności jest
+// wtedy martwy: P24 od razu odsyła z niego z powrotem do sklepu. Sklep
+// zakłada nową transakcję i dopiero na nią przekierowuje.
+$buttonUrl = $retryUrl !== '' ? $retryUrl : $paywallUrl;
 
 $escape = static fn ($value): string => htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 ?>
@@ -53,6 +61,26 @@ $escape = static fn ($value): string => htmlspecialchars((string) $value, ENT_QU
     <div class="hikashop_przelewy24_paid">
         <h2><?php echo $escape(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_PAID_TITLE')); ?></h2>
         <p><?php echo $escape($paidNotice); ?></p>
+    </div>
+<?php elseif ($unpaidNotice !== '') : ?>
+    <?php
+    // Klient wrócił ze strony płatności P24, a wpłaty nie ma. To nie jest
+    // podziękowanie za zamówienie: ma zobaczyć, że nie zapłacił, i móc
+    // zapłacić jeszcze raz.
+    ?>
+    <div class="hikashop_przelewy24_unpaid">
+        <h2><?php echo $escape(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_RETURN_UNPAID_TITLE')); ?></h2>
+        <p><?php echo $escape($unpaidNotice); ?></p>
+    <?php if ($retryUrl !== '') : ?>
+        <p>
+            <a class="btn btn-primary btn-lg hikashop_przelewy24_retry" href="<?php echo $escape($retryUrl); ?>" rel="nofollow">
+                <?php echo $escape(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_BACK_TO_CHECKOUT')); ?>
+            </a>
+        </p>
+    <?php endif; ?>
+        <p class="hikashop_przelewy24_note">
+            <?php echo $escape(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_ORDER_KEPT')); ?>
+        </p>
     </div>
 <?php elseif ($errorText !== '') : ?>
     <div class="hikashop_przelewy24_error">
@@ -82,7 +110,7 @@ $escape = static fn ($value): string => htmlspecialchars((string) $value, ENT_QU
         <p>
             <a id="hikashopPrzelewy24Button"
                class="btn btn-primary btn-lg hikashop_przelewy24_button"
-               href="<?php echo $escape($paywallUrl); ?>"
+               href="<?php echo $escape($buttonUrl); ?>"
                rel="nofollow">
                 <?php echo $escape(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_GO_TO_GATEWAY')); ?>
             </a>

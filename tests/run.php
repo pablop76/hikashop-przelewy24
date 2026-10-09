@@ -409,6 +409,39 @@ sprawdz('odczyt liczby z pola po serialize', 777, OrderPaymentData::getInt($zamo
 sprawdz('brak pola daje wartosc domyslna', '', OrderPaymentData::getString(null, OrderPaymentData::SESSION_ID));
 sprawdz('uszkodzone pole nie wysypuje odczytu', '', OrderPaymentData::getString((object) ['order_payment_params' => 'sieczka'], OrderPaymentData::SESSION_ID));
 
+sekcja('OrderPaymentData: sesje zamowienia');
+$sesjaA = SessionId::generate(4242);
+$sesjaB = SessionId::generate(4242);
+$sesjaC = SessionId::generate(4242);
+
+$poDwochProbach = (object) ['order_payment_params' => serialize((object) [
+    'p24_session_id' => $sesjaB,
+    'p24_sessions'   => [$sesjaA],
+])];
+
+sprawdz('zamowienie bez prob nie ma sesji', [], OrderPaymentData::sessionsOf(null));
+sprawdz('sesje od najnowszej', [$sesjaB, $sesjaA], OrderPaymentData::sessionsOf($poDwochProbach));
+sprawdz('nowa proba przesuwa biezaca sesje na liste wczesniejszych', [$sesjaA, $sesjaB], OrderPaymentData::earlierSessions($poDwochProbach, $sesjaC));
+sprawdz('ta sama sesja nie trafia na liste drugi raz', [$sesjaA], OrderPaymentData::earlierSessions($poDwochProbach, $sesjaB));
+sprawdz('niepoprawne zapisy sa pomijane', [$sesjaA], OrderPaymentData::sessionsOf((object) ['order_payment_params' => (object) [
+    'p24_session_id' => 'to nie jest sesja!',
+    'p24_sessions'   => ['ani to!', $sesjaA],
+]]));
+
+$ponadLimit = [];
+
+for ($i = 0; $i < OrderPaymentData::SESSIONS_LIMIT + 4; $i++) {
+    $ponadLimit[] = SessionId::generate(4242);
+}
+
+$przyciete = OrderPaymentData::earlierSessions((object) ['order_payment_params' => (object) [
+    'p24_session_id' => $sesjaA,
+    'p24_sessions'   => $ponadLimit,
+]], $sesjaB);
+
+sprawdz('lista wczesniejszych sesji ma limit', OrderPaymentData::SESSIONS_LIMIT, count($przyciete));
+sprawdz('zostaja najnowsze, odpada najstarsza', [true, false], [end($przyciete) === $sesjaA, in_array($ponadLimit[0], $przyciete, true)]);
+
 sekcja('RegisterRequest: narzucona metoda platnosci');
 
 /**

@@ -158,6 +158,27 @@ class Przelewy24 extends \hikashopPaymentPlugin
      */
     public $p24_paid_notice = '';
 
+    /**
+     * Informacja dla klienta, który wrócił z bramki bez potwierdzonej zapłaty.
+     *
+     * Osobna od p24_error: tamten mówi, że płatności nie udało się zacząć,
+     * a tu klient był już na stronie P24 i wrócił bez wpłaty.
+     *
+     * @var string
+     */
+    public $p24_unpaid_notice = '';
+
+    /**
+     * Dopisek do adresów zadania notify, które otwiera klient, a nie P24.
+     *
+     * Wtyczka systemowa HikaShopa przechwytuje zadanie notify, zanim Joomla
+     * zacznie budować stronę, i oddaje wynik bez szablonu witryny. Dla
+     * powiadomień z P24 to dobrze. Klient wracający z bramki albo ponawiający
+     * zapłatę zobaczyłby jednak goły tekst na białym tle. Ten parametr każe
+     * wtyczce systemowej odpuścić i żądanie obsługuje komponent, w szablonie.
+     */
+    protected const CUSTOMER_PAGE = '&skip_system_notification=1';
+
     /** Wyniki sprawdzenia w P24, czy za zamówienie już zapłacono. */
     protected const P24_UNPAID    = 'unpaid';
     protected const P24_CONFIRMED = 'confirmed';
@@ -321,7 +342,23 @@ class Przelewy24 extends \hikashopPaymentPlugin
             // zamówienie jako nieopłacone i chce zapłacić jeszcze raz. Zanim
             // wyślemy go do bramki, pytamy P24 o transakcję tego zamówienia.
             // Opłaconą potwierdzamy od razu, tak samo jak po powiadomieniu.
-            $wP24 = $this->settleIfPaidInP24($stan, $config, $logger, $service, $amount, $currencyCode);
+            try {
+                $wP24 = $this->settleIfPaidInP24($stan, $config, $logger, $service, $amount, $currencyCode);
+            } catch (ApiException $exception) {
+                // Skoro nie wiemy, czy poprzednia próba nie została opłacona,
+                // nowej transakcji nie zakładamy. Klient może spróbować za chwilę.
+                $logger->error('Nie udało się sprawdzić w P24, czy za zamówienie już zapłacono', [
+                    'order_id' => $order->order_id ?? 0,
+                    'http'     => $exception->getHttpStatus(),
+                    'powod'    => $exception->getMessage(),
+                ]);
+
+                $this->p24_error = $exception->isAuthenticationFailure()
+                    ? Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_ERROR_AUTH')
+                    : Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_ERROR_REGISTER');
+
+                return null;
+            }
 
             if ($wP24 !== self::P24_UNPAID) {
                 $this->p24_retry_url = '';
@@ -355,10 +392,12 @@ class Przelewy24 extends \hikashopPaymentPlugin
                 return null;
             }
 
-            // Jeden identyfikator sesji na zamówienie, nie na próbę.
-            // Ponowienie zapłaty ma prowadzić do TEJ SAMEJ transakcji
-            // w P24, inaczej klient może zapłacić dwa razy.
-            $sessionId = OrderPaymentData::sessionIdFor($stan, (int) $order->order_id);
+            // Każda próba zapłaty dostaje własną sesję, czyli nową transakcję
+            // w P24. Tej samej nie da się dokończyć: po nieudanej płatności
+            // jej strona od razu odsyła klienta z powrotem do sklepu.
+            // Przed zapłaceniem dwa razy chroni pytanie zadane wyżej, które
+            // obejmuje wszystkie wcześniejsze sesje zamówienia.
+            $sessionId = SessionId::generate((int) $order->order_id);
 
             // Zapisujemy próbę PRZED wysłaniem rejestracji. Gdyby P24
             // zdążyło przysłać powiadomienie, zanim wrócimy z odpowiedzią,
@@ -367,8 +406,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
                 (int) $order->order_id,
                 $sessionId,
                 $amount,
-                $currencyCode,
-                OrderPaymentData::getInt($stan, OrderPaymentData::ATTEMPTS)
+                $currencyCode
             );
 
             $token = $service->register(new RegisterRequest(
@@ -453,8 +491,17 @@ class Przelewy24 extends \hikashopPaymentPlugin
         // Ten sam punkt wejścia obsługuje przycisk ponowienia zapłaty.
         // HikaShop w wersji Starter nie ma własnego „zapłać teraz”,
         // a zadanie notify jest dostępne w każdej wersji.
-        if ($input->getCmd('p24_action', '') === 'retry') {
+        $akcja = $input->getCmd('p24_action', '');
+
+        if ($akcja === 'retry') {
             return $this->handleRetry();
+        }
+
+        // Tędy wraca też klient ze strony płatności P24. P24 odsyła go na
+        // ten sam adres po zapłacie, po błędzie i po rezygnacji, więc zanim
+        // podziękujemy za zamówienie, pytamy P24, jak było naprawdę.
+        if ($akcja === 'return') {
+            return $this->handleReturn();
         }
 
         $orderId  = (int) $input->get('order_id', 0, 'int');
@@ -492,7 +539,15 @@ class Przelewy24 extends \hikashopPaymentPlugin
 
             $notification = Notification::fromRequestBody($this->readNotificationBody());
 
-            $storedSessionId = OrderPaymentData::getString($dbOrder, OrderPaymentData::SESSION_ID);
+            // Każda próba zapłaty ma własną sesję, a wpłata może dotyczyć
+            // wcześniejszej: przelew tradycyjny dochodzi po godzinach, klient
+            // mógł też zapłacić z odnośnika w wiadomości od P24. Przyjmujemy
+            // więc dowolną sesję zapisaną przy TYM zamówieniu i żadnej innej.
+            // Dla nieznanej sesji do porównania idzie bieżąca i powiadomienie
+            // odpada na pierwszym sprawdzeniu.
+            $storedSessionId = \in_array($notification->sessionId, OrderPaymentData::sessionsOf($dbOrder), true)
+                ? $notification->sessionId
+                : OrderPaymentData::getString($dbOrder, OrderPaymentData::SESSION_ID);
             $currencyCode    = $this->currencyCode();
             $expectedAmount  = Amount::toMinorUnit(
                 $dbOrder->order_full_price,
@@ -559,7 +614,9 @@ class Przelewy24 extends \hikashopPaymentPlugin
                 return false;
             }
 
-            return $this->markVerified($orderId, $config, $logger);
+            return $this->markVerified($orderId, $config, $logger, [
+                OrderPaymentData::PAID_SESSION => $storedSessionId,
+            ]);
         } catch (SignatureException $exception) {
             // Niezgodność podpisu, sesji, kwoty lub waluty. Zamówienia
             // nie wolno wtedy ruszyć.
@@ -979,13 +1036,41 @@ class Przelewy24 extends \hikashopPaymentPlugin
      */
     protected function settleIfPaidInP24($order, Config $config, Logger $logger, TransactionService $service, $expectedAmount, $currencyCode)
     {
-        $sessionId = \is_object($order) ? OrderPaymentData::getString($order, OrderPaymentData::SESSION_ID) : '';
+        $sesje = \is_object($order) ? OrderPaymentData::sessionsOf($order) : [];
+        $wynik = self::P24_UNPAID;
 
         // Bez zapisanej sesji nie było jeszcze żadnej próby zapłaty.
-        if ($sessionId === '') {
-            return self::P24_UNPAID;
+        // Każda próba ma własną sesję, więc wpłata mogła trafić do dowolnej
+        // z nich: pytamy o wszystkie, od najnowszej.
+        foreach ($sesje as $sessionId) {
+            $stanSesji = $this->settleSession($order, $sessionId, $config, $logger, $service, $expectedAmount, $currencyCode);
+
+            // Wpłata w kwocie zamówienia rozstrzyga sprawę od razu.
+            if ($stanSesji === self::P24_CONFIRMED || $stanSesji === self::P24_PENDING) {
+                return $stanSesji;
+            }
+
+            // Wpłata w złej kwocie jest ważniejsza niż zwrot: pieniądze
+            // klienta nadal leżą w P24 i nie wolno brać od niego kolejnych.
+            if ($stanSesji === self::P24_MISMATCH
+                || ($stanSesji === self::P24_REFUNDED && $wynik === self::P24_UNPAID)
+            ) {
+                $wynik = $stanSesji;
+            }
         }
 
+        return $wynik;
+    }
+
+    /**
+     * Sprawdza w P24 jedną sesję zamówienia i opłaconą potwierdza.
+     *
+     * @return string  jedna ze stałych P24_*
+     *
+     * @throws ApiException  gdy P24 nie odpowiada na pytanie o stan sesji
+     */
+    protected function settleSession($order, string $sessionId, Config $config, Logger $logger, TransactionService $service, $expectedAmount, $currencyCode)
+    {
         $orderId    = (int) ($order->order_id ?? 0);
         $transakcja = $service->findBySessionId($sessionId);
 
@@ -1058,6 +1143,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
         $this->markVerified($orderId, $config, $logger, [
             OrderPaymentData::P24_ORDER_ID => $p24OrderId,
             OrderPaymentData::METHOD_ID    => (int) ($transakcja['paymentMethod'] ?? 0),
+            OrderPaymentData::PAID_SESSION => $sessionId,
         ]);
 
         return self::P24_CONFIRMED;
@@ -1137,15 +1223,42 @@ class Przelewy24 extends \hikashopPaymentPlugin
     }
 
     /**
-     * Adres, pod który P24 odsyła klienta po zakończeniu płatności.
+     * Adres, pod który P24 odsyła klienta ze strony płatności.
      *
-     * Nie potwierdza zapłaty. Służy wyłącznie pokazaniu wyniku.
+     * P24 używa go po zapłacie, po błędzie i po rezygnacji, bez żadnej
+     * informacji o wyniku. Dlatego nie prowadzi wprost do podziękowania,
+     * tylko do wtyczki, która pyta P24 o stan płatności: patrz handleReturn().
      */
     protected function buildReturnUrl($order)
     {
+        return HIKASHOP_LIVE . 'index.php?option=com_hikashop&ctrl=checkout&task=notify'
+            . '&notif_payment=' . $this->name
+            . '&p24_action=return'
+            . self::CUSTOMER_PAGE
+            . '&order_id=' . (int) $order->order_id
+            . '&p24_return=' . $this->returnToken($order)
+            . (string) ($this->url_itemid ?? '');
+    }
+
+    /**
+     * Znacznik adresu powrotu, osobny od znacznika ponowienia i powiadomień.
+     */
+    protected function returnToken($order)
+    {
+        return hash_hmac('sha256', 'p24-return|' . (int) $order->order_id, (string) ($order->order_token ?? ''));
+    }
+
+    /**
+     * Adres strony podziękowania HikaShopa.
+     *
+     * Zapłaty nie potwierdza. Klient trafia tu dopiero wtedy, gdy zapłata
+     * jest potwierdzona w P24.
+     */
+    protected function buildThanksUrl($order)
+    {
         return HIKASHOP_LIVE . 'index.php?option=com_hikashop&ctrl=checkout&task=after_end'
             . '&order_id=' . (int) $order->order_id
-            . $this->url_itemid;
+            . (string) ($this->url_itemid ?? '');
     }
 
     /**
@@ -1161,6 +1274,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
         return HIKASHOP_LIVE . 'index.php?option=com_hikashop&ctrl=checkout&task=notify'
             . '&notif_payment=' . $this->name
             . '&p24_action=retry'
+            . self::CUSTOMER_PAGE
             . '&order_id=' . (int) $order->order_id
             . '&p24_retry=' . $this->retryToken($order)
             . (string) ($this->url_itemid ?? '');
@@ -1181,9 +1295,9 @@ class Przelewy24 extends \hikashopPaymentPlugin
     /**
      * Ponawia zapłatę za zamówienie, którego płatność nie ruszyła.
      *
-     * Rejestruje transakcję z tym samym identyfikatorem sesji, więc P24
-     * prowadzi do tej samej transakcji, a nie zakłada drugiej. Po udanej
-     * rejestracji przekierowuje klienta prosto na stronę płatności.
+     * Zanim założy nową transakcję, pyta P24, czy któraś z wcześniejszych
+     * prób nie została opłacona. Po udanej rejestracji przekierowuje
+     * klienta prosto na stronę płatności.
      */
     protected function handleRetry()
     {
@@ -1237,6 +1351,109 @@ class Przelewy24 extends \hikashopPaymentPlugin
         $this->redirectTo($this->p24_paywall_url);
 
         return true;
+    }
+
+    /**
+     * Przyjmuje klienta wracającego ze strony płatności P24.
+     *
+     * P24 odsyła klienta na ten sam adres bez względu na wynik, a po
+     * nieudanej płatności nie pokazuje mu nawet komunikatu. Gdyby adres
+     * powrotu prowadził wprost do podziękowania, nieudana płatność
+     * wyglądałaby w sklepie jak udana. Pytamy więc P24 o stan płatności:
+     *
+     * - wpłata jest: weryfikujemy ją tak samo jak po powiadomieniu i dopiero
+     *   wtedy pokazujemy podziękowanie
+     * - wpłaty nie ma: klient czyta, że płatność nie została potwierdzona,
+     *   i dostaje przycisk ponowienia
+     * - P24 nie odpowiada: nie zgadujemy, klient dostaje neutralną informację
+     *
+     * To nadal nie jest uznawanie zapłaty na słowo przeglądarki. Stan
+     * podaje P24 w odpowiedzi na pytanie z serwera, a status zamówienia
+     * zmienia wyłącznie udane transaction/verify.
+     */
+    protected function handleReturn()
+    {
+        $input   = Factory::getApplication()->getInput();
+        $orderId = (int) $input->get('order_id', 0, 'int');
+        $token   = (string) $input->get('p24_return', '', 'string');
+
+        $dbOrder = $this->getOrder($orderId);
+
+        if (empty($dbOrder)
+            || !$this->loadPaymentParams($dbOrder)
+            || !hash_equals($this->returnToken($dbOrder), $token)
+        ) {
+            $this->writeToLog('P24 [BŁĄD] Powrót z bramki z błędnym znacznikiem | order_id=' . $orderId);
+
+            $this->p24_error     = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_RETRY_INVALID');
+            $this->p24_retry_url = '';
+
+            return $this->renderPage('end');
+        }
+
+        $config = Config::fromPaymentParams($this->payment_params);
+        $logger = $this->buildLogger($config);
+
+        $this->loadOrderData($dbOrder);
+
+        // Powiadomienie z P24 zwykle zdąża przed klientem.
+        if ($this->isAlreadyPaid($dbOrder, $config)) {
+            $this->redirectTo($this->buildThanksUrl($dbOrder));
+
+            return true;
+        }
+
+        $zamkniete = \in_array((string) ($dbOrder->order_status ?? ''), $this->closedStatuses(), true);
+
+        $this->p24_retry_url = $zamkniete ? '' : $this->buildRetryUrl($dbOrder);
+
+        try {
+            $config->assertComplete();
+
+            $wP24 = $this->settleIfPaidInP24(
+                $dbOrder,
+                $config,
+                $logger,
+                $this->buildService($config, $logger),
+                Amount::toMinorUnit($dbOrder->order_full_price, $this->currencyFractionDigits()),
+                $this->currencyCode()
+            );
+        } catch (Throwable $exception) {
+            $logger->error('Nie udało się sprawdzić stanu płatności po powrocie klienta z bramki', [
+                'order_id' => $orderId,
+                'powod'    => $exception->getMessage(),
+            ]);
+
+            $this->p24_unpaid_notice = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_RETURN_UNKNOWN');
+
+            return $this->renderPage('end');
+        }
+
+        if ($wP24 === self::P24_CONFIRMED) {
+            $this->redirectTo($this->buildThanksUrl($dbOrder));
+
+            return true;
+        }
+
+        $logger->info('Klient wrócił z bramki bez potwierdzonej zapłaty', [
+            'order_id' => $orderId,
+            'stan'     => $wP24,
+        ]);
+
+        if ($wP24 === self::P24_PENDING) {
+            $this->p24_paid_notice = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_PAID_PENDING');
+            $this->p24_retry_url   = '';
+        } elseif ($wP24 === self::P24_MISMATCH) {
+            $this->p24_error     = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_PAID_MISMATCH');
+            $this->p24_retry_url = '';
+        } elseif ($wP24 === self::P24_REFUNDED) {
+            $this->p24_error     = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_RETRY_UNAVAILABLE');
+            $this->p24_retry_url = '';
+        } else {
+            $this->p24_unpaid_notice = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_RETURN_UNPAID');
+        }
+
+        return $this->renderPage('end');
     }
 
     /**

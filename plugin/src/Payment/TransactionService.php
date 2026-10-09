@@ -122,10 +122,17 @@ final class TransactionService
      *
      * Przydaje się, gdy klient wraca do sklepu, a powiadomienie jeszcze
      * nie dotarło: zamiast zgadywać ze strony powrotu, pytamy wprost.
-     * Dla transakcji zarejestrowanej, ale nieopłaconej, P24 odpowiada 404,
-     * więc ten kod jest tu zwykłą odpowiedzią, nie błędem.
+     * Dla transakcji zarejestrowanej, przy której klient nie wybrał jeszcze
+     * sposobu zapłaty, P24 odpowiada 404, więc ten kod jest tu zwykłą
+     * odpowiedzią, nie błędem.
+     *
+     * Każda inna odmowa i brak odpowiedzi idą dalej jako wyjątek. „Nie wiem”
+     * to nie to samo co „nie zapłacono”: od tej odpowiedzi zależy, czy
+     * klient dostanie drugą transakcję za to samo zamówienie.
      *
      * @return array<string, mixed>|null  dane transakcji albo null, gdy P24 jej nie zna
+     *
+     * @throws ApiException  gdy P24 nie odpowiada albo odmawia z innego powodu niż brak transakcji
      */
     public function findBySessionId(string $sessionId): ?array
     {
@@ -135,6 +142,10 @@ final class TransactionService
                 [404]
             );
         } catch (ApiException $exception) {
+            if ($exception->getHttpStatus() !== 404) {
+                throw $exception;
+            }
+
             // Nieznana sesja to zwykła sytuacja: klient mógł przerwać
             // płatność, zanim P24 cokolwiek o niej zapisało.
             $this->logger->info('P24 nie zna tej sesji płatności', [

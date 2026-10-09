@@ -221,10 +221,13 @@ $powiadomienie = static function (array $nadpisania = []) use ($config, $session
     ], $nadpisania);
 
     if (!isset($nadpisania['sign'])) {
+        // Podpis liczymy z sesji, która idzie w powiadomieniu, tak jak P24.
+        // Dzięki temu powiadomienie o obcej sesji jest poprawnie podpisane
+        // i musi odpaść na sprawdzeniu sesji, a nie przypadkiem na podpisie.
         $dane['sign'] = Signature::forNotification(
             $config->merchantId,
             $config->posId,
-            $sessionId,
+            (string) $dane['sessionId'],
             (int) $dane['amount'],
             (int) $dane['originAmount'],
             (string) $dane['currency'],
@@ -468,6 +471,40 @@ $r = $uruchom($powiadomienie(['orderId' => $p24OrderId + 1]), $tokenPoprawny);
 wynik('druga transakcja nie jest weryfikowana', $r['wywolan'] === 0);
 wynik('status bez zmian', $r['status'] === $config->verifiedStatus, $r['status']);
 wynik('przy zamowieniu zostaje pierwsza transakcja', (int) ($zapisaneParametry()->{OrderPaymentData::P24_ORDER_ID} ?? 0) === $p24OrderId);
+
+echo PHP_EOL . '7. Wplata na wczesniejsza sesje zamowienia' . PHP_EOL;
+
+// Kazda proba zaplaty ma wlasna sesje. Wplata moze przyjsc na wczesniejsza:
+// przelew tradycyjny dochodzi po godzinach, klient mogl tez zaplacic
+// z odnosnika w wiadomosci od P24. Takie powiadomienie nalezy do zamowienia.
+$staraSesja = SessionId::generate(999999);
+
+$zresetuj('created', [OrderPaymentData::SESSIONS => [$staraSesja]]);
+$atrapa = new TransportAtrapa();
+$r      = $uruchom($powiadomienie(['sessionId' => $staraSesja]), $tokenPoprawny, $atrapa);
+$wyslane = json_decode((string) ($atrapa->wywolania[0]['tresc'] ?? ''), true) ?: [];
+
+wynik('wplata na wczesniejsza sesje jest weryfikowana', $r['wywolan'] === 1);
+wynik('weryfikacja dotyczy sesji, na ktora wplynela wplata', ($wyslane['sessionId'] ?? '') === $staraSesja, (string) ($wyslane['sessionId'] ?? ''));
+wynik('zamowienie oplacone', $r['status'] === $config->verifiedStatus, $r['status']);
+wynik('przy zamowieniu zapisana oplacona sesja', (string) ($zapisaneParametry()->{OrderPaymentData::PAID_SESSION} ?? '') === $staraSesja);
+wynik('biezaca sesja zamowienia bez zmian', (string) ($zapisaneParametry()->{OrderPaymentData::SESSION_ID} ?? '') === $sessionId);
+
+$zresetuj();
+$r = $uruchom($powiadomienie(), $tokenPoprawny);
+wynik('wplata na biezaca sesje: zapisana jako oplacona', (string) ($zapisaneParametry()->{OrderPaymentData::PAID_SESSION} ?? '') === $sessionId);
+
+// Sesja, ktorej przy zamowieniu nie ma. Podpis jest poprawny, bo liczy sie
+// go z danych powiadomienia, a mimo to zamowienia nie wolno ruszyc.
+$zresetuj('created', [OrderPaymentData::SESSIONS => [$staraSesja]]);
+$r = $uruchom($powiadomienie(['sessionId' => SessionId::generate(999999)]), $tokenPoprawny);
+wynik('obca sesja z poprawnym podpisem: bez weryfikacji', $r['wywolan'] === 0);
+wynik('obca sesja: powiadomienie odrzucone, status bez zmian', $r['wynik'] === false && $r['status'] === 'created', $r['status']);
+
+// Sesja innego zamowienia tez jest obca, nawet gdy wyglada podobnie.
+$zresetuj();
+$r = $uruchom($powiadomienie(['sessionId' => $staraSesja]), $tokenPoprawny);
+wynik('sesja spoza listy zamowienia: bez weryfikacji', $r['wywolan'] === 0 && $r['status'] === 'created', $r['status']);
 
 echo PHP_EOL . str_repeat('-', 60) . PHP_EOL;
 echo 'Zdane: ' . $zdane . ', niezdane: ' . $bledy . PHP_EOL;

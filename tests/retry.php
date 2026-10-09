@@ -173,6 +173,27 @@ final class WtyczkaTestowa extends Przelewy24
     {
         return $this->retryToken($order);
     }
+
+    public function adresPowrotu($order): string
+    {
+        return $this->buildReturnUrl($order);
+    }
+
+    public function znacznikPowrotu($order): string
+    {
+        return $this->returnToken($order);
+    }
+
+    /**
+     * Strona przejścia do bramki, taka jak po złożeniu zamówienia.
+     */
+    public function widokPrzejscia(string $bramka, string $ponowienie): string
+    {
+        $this->p24_paywall_url = $bramka;
+        $this->p24_retry_url   = $ponowienie;
+
+        return $this->renderPage('end');
+    }
 }
 
 // --- przygotowanie ---------------------------------------------------
@@ -324,6 +345,9 @@ $adres = $pomocnik->adresPonowienia($zamowienie);
 
 wynik('prowadzi do wtyczki, nie do pustej kasy', str_contains($adres, 'task=notify') && !str_contains($adres, 'task=step'));
 wynik('wskazuje ponowienie i zamowienie', str_contains($adres, 'p24_action=retry') && str_contains($adres, 'order_id=' . $orderId));
+// Bez tego parametru wtyczka systemowa HikaShopa oddaje wynik zadania notify
+// bez szablonu witryny i klient widzi goły tekst na białym tle.
+wynik('strona ponowienia wyswietla sie w szablonie witryny', str_contains($adres, 'skip_system_notification=1'));
 wynik('niesie znacznik zamowienia', str_contains($adres, 'p24_retry=' . $znacznik));
 wynik('nie zdradza order_token wprost przez znacznik', $znacznik !== $orderToken && $znacznik !== md5($orderToken));
 wynik('inny znacznik dla innego zamowienia', $pomocnik->znacznik((object) ['order_id' => $orderId + 1, 'order_token' => $orderToken]) !== $znacznik);
@@ -353,8 +377,11 @@ $ustawStatus('created');
 
 echo PHP_EOL . '3. P24 nie odpowiada' . PHP_EOL;
 
+// Skoro P24 nie odpowiada na pytanie o poprzednią próbę, nie wiemy, czy nie
+// została opłacona. Nowej transakcji wtedy nie zakładamy.
 $r = $ponow($znacznik, new TransportAtrapa(500, '{"error":"blad","code":500}', []));
-wynik('proba rejestracji byla', $r['atrapa']->ile(TransportAtrapa::REJESTRACJA) === 1);
+wynik('bez rejestracji, bo nie wiadomo, czy poprzednia proba nie jest oplacona', $r['atrapa']->ile(TransportAtrapa::REJESTRACJA) === 0);
+wynik('sesja przy zamowieniu bez zmian', (string) ($daneTransakcji()->{OrderPaymentData::SESSION_ID} ?? '') === $sessionId);
 wynik('bez przekierowania', $r['wtyczka']->przekierowanie === null);
 wynik('klient znow widzi przycisk ponowienia', is_string($r['wynik']) && str_contains($r['wynik'], 'hikashop_przelewy24_retry'));
 wynik('awaria P24 przy pytaniu o stan trafia do dziennika jako blad', count(preg_grep('/\[BŁĄD\].*by\/sessionId/u', $r['wtyczka']->dziennik)) === 1);
@@ -375,10 +402,18 @@ wynik('brak wplaty w P24 nie jest bledem w dzienniku', preg_grep('/\[BŁĄD\]/u'
 
 $tresc = json_decode((string) ($r['atrapa']->pytania(TransportAtrapa::REJESTRACJA)[0]['tresc'] ?? ''), true) ?: [];
 
-wynik('ten sam identyfikator sesji co przy zamowieniu', ($tresc['sessionId'] ?? '') === $sessionId);
+// Po nieudanej płatności P24 nie pozwala dokończyć tej samej transakcji:
+// jej strona od razu odsyła klienta do sklepu (sandbox, 09.10.2026).
+// Ponowienie musi więc założyć nową.
+$nowaSesja = (string) ($tresc['sessionId'] ?? '');
+
+wynik('nowa sesja, inna niz przy poprzedniej probie', $nowaSesja !== $sessionId && SessionId::isValid($nowaSesja), $nowaSesja);
+wynik('nowa sesja nadal wskazuje zamowienie', str_starts_with($nowaSesja, 'hika_' . $orderId . '_'), $nowaSesja);
 wynik('kwota zamowienia w groszach', ($tresc['amount'] ?? 0) === 1234, (string) ($tresc['amount'] ?? ''));
+wynik('adres powrotu prowadzi do wtyczki, nie wprost do podziekowania', str_contains((string) ($tresc['urlReturn'] ?? ''), 'p24_action=return') && !str_contains((string) ($tresc['urlReturn'] ?? ''), 'task=after_end'), (string) ($tresc['urlReturn'] ?? ''));
 wynik('przekierowanie na strone platnosci', str_contains((string) $r['wtyczka']->przekierowanie, 'TOKENPONOWIENIA123'), (string) $r['wtyczka']->przekierowanie);
-wynik('sesja przy zamowieniu bez zmian', (string) ($po->{OrderPaymentData::SESSION_ID} ?? '') === $sessionId);
+wynik('nowa sesja zapisana przy zamowieniu jako biezaca', (string) ($po->{OrderPaymentData::SESSION_ID} ?? '') === $nowaSesja);
+wynik('poprzednia sesja zostaje na liscie wczesniejszych', array_values((array) ($po->{OrderPaymentData::SESSIONS} ?? [])) === [$sessionId]);
 wynik('licznik prob wzrosl', (int) ($po->{OrderPaymentData::ATTEMPTS} ?? 0) > (int) ($przed->{OrderPaymentData::ATTEMPTS} ?? 0));
 wynik('token zapisany przy zamowieniu', (string) ($po->{OrderPaymentData::TOKEN} ?? '') === 'TOKENPONOWIENIA123');
 
@@ -469,6 +504,158 @@ $r = $ponow($znacznik, $zaplacone($stanWP24(3)));
 wynik('wplata zwrocona w P24: bez weryfikacji i bez rejestracji', $r['atrapa']->ile(TransportAtrapa::WERYFIKACJA) === 0 && $r['atrapa']->ile(TransportAtrapa::REJESTRACJA) === 0);
 wynik('wplata zwrocona w P24: zamowienie zostaje nieoplacone', $statusZamowienia() === 'created');
 wynik('wplata zwrocona w P24: komunikat bez przycisku', is_string($r['wynik']) && str_contains($r['wynik'], $tekst('RETRY_UNAVAILABLE')) && !str_contains($r['wynik'], 'hikashop_przelewy24_retry'));
+
+echo PHP_EOL . '8. Kolejne proby i wplata na wczesniejsza sesje' . PHP_EOL;
+
+$odNowa();
+$r1 = $ponow($znacznik);
+$s1 = (string) ($daneTransakcji()->{OrderPaymentData::SESSION_ID} ?? '');
+$r2 = $ponow($znacznik);
+$po = $daneTransakcji();
+$s2 = (string) ($po->{OrderPaymentData::SESSION_ID} ?? '');
+
+wynik('kazda proba dostaje wlasna sesje', count(array_unique([$sessionId, $s1, $s2])) === 3 && $s1 !== '' && $s2 !== '');
+wynik('przed kolejna proba pytanie o kazda wczesniejsza sesje', $r2['atrapa']->ile(TransportAtrapa::STAN) === 2, (string) $r2['atrapa']->ile(TransportAtrapa::STAN));
+wynik('pytania ida od najnowszej sesji', str_ends_with($r2['atrapa']->pytania(TransportAtrapa::STAN)[0]['adres'] ?? '', '/' . $s1)
+    && str_ends_with($r2['atrapa']->pytania(TransportAtrapa::STAN)[1]['adres'] ?? '', '/' . $sessionId));
+wynik('lista wczesniejszych sesji w kolejnosci prob', array_values((array) ($po->{OrderPaymentData::SESSIONS} ?? [])) === [$sessionId, $s1]);
+wynik('licznik prob liczy kazda', (int) ($po->{OrderPaymentData::ATTEMPTS} ?? 0) === 3, (string) ($po->{OrderPaymentData::ATTEMPTS} ?? ''));
+
+// Klient próbował trzy razy, a wpłata doszła na pierwszą sesję, na przykład
+// przelewem tradycyjnym. Czwarta próba nie może założyć kolejnej transakcji.
+$wplataNaPierwsza = new TransportAtrapa(poAdresie: [
+    'by/sessionId/' . $sessionId => $stanWP24(1),
+    TransportAtrapa::STAN        => TransportAtrapa::NIEOPLACONA,
+    TransportAtrapa::WERYFIKACJA => [200, '{"data":{"status":"success"},"responseCode":0}'],
+]);
+
+$r  = $ponow($znacznik, $wplataNaPierwsza);
+$po = $daneTransakcji();
+
+$weryfikacja = json_decode((string) ($r['atrapa']->pytania(TransportAtrapa::WERYFIKACJA)[0]['tresc'] ?? ''), true) ?: [];
+
+wynik('wplata na wczesniejsza sesje: bez nowej rejestracji', $r['atrapa']->ile(TransportAtrapa::REJESTRACJA) === 0 && $r['wtyczka']->przekierowanie === null);
+wynik('wplata na wczesniejsza sesje: weryfikacja tej sesji', ($weryfikacja['sessionId'] ?? '') === $sessionId, (string) ($weryfikacja['sessionId'] ?? ''));
+wynik('wplata na wczesniejsza sesje: zamowienie oplacone', $statusZamowienia() === $config->verifiedStatus, $statusZamowienia());
+wynik('wplata na wczesniejsza sesje: zapisana oplacona sesja', (string) ($po->{OrderPaymentData::PAID_SESSION} ?? '') === $sessionId);
+wynik('wplata na wczesniejsza sesje: klient czyta, ze zaplata jest potwierdzona', is_string($r['wynik']) && str_contains($r['wynik'], $tekst('PAID_CONFIRMED')));
+
+// Lista wcześniejszych sesji nie rośnie bez końca.
+$odNowa();
+
+for ($i = 0; $i < OrderPaymentData::SESSIONS_LIMIT + 3; $i++) {
+    $ponow($znacznik);
+}
+
+$po = $daneTransakcji();
+wynik('lista wczesniejszych sesji ma limit', count((array) ($po->{OrderPaymentData::SESSIONS} ?? [])) === OrderPaymentData::SESSIONS_LIMIT, (string) count((array) ($po->{OrderPaymentData::SESSIONS} ?? [])));
+wynik('z listy odpadaja najstarsze sesje', !in_array($sessionId, (array) ($po->{OrderPaymentData::SESSIONS} ?? []), true));
+
+echo PHP_EOL . '9. Przycisk na stronie przejscia do bramki' . PHP_EOL;
+
+// Klient klika go po powrocie z bramki przyciskiem „wstecz”. Zapisany na
+// stronie adres bramki jest wtedy martwy, więc przycisk idzie przez sklep.
+$widok = $pomocnik->widokPrzejscia('https://sandbox.przelewy24.pl/trnRequest/TOKENSTRONY', $adres);
+
+wynik('przycisk prowadzi przez sklep, ktory zalozy nowa transakcje', preg_match('/id="hikashopPrzelewy24Button"[^>]*href="[^"]*p24_action=retry/s', $widok) === 1);
+wynik('przycisk nie prowadzi wprost do zapisanego adresu bramki', preg_match('/id="hikashopPrzelewy24Button"[^>]*href="[^"]*trnRequest/s', $widok) === 0);
+wynik('samoczynne przejscie nadal idzie wprost do bramki', str_contains($widok, 'var adres = "https://sandbox.przelewy24.pl/trnRequest/TOKENSTRONY"'));
+wynik('bez adresu ponowienia przycisk prowadzi do bramki', preg_match('/id="hikashopPrzelewy24Button"[^>]*href="[^"]*trnRequest/s', $pomocnik->widokPrzejscia('https://sandbox.przelewy24.pl/trnRequest/TOKENSTRONY', '')) === 1);
+
+// P24 odsyła klienta na ten sam adres po zapłacie, po błędzie i po
+// rezygnacji, a po nieudanej płatności nie pokazuje nawet komunikatu.
+echo PHP_EOL . '10. Powrot klienta ze strony platnosci P24' . PHP_EOL;
+
+/**
+ * Wywołuje powrót z bramki tak, jak zrobi to przeglądarka klienta.
+ *
+ * @return array{wynik: mixed, wtyczka: WtyczkaTestowa, wywolan: int, atrapa: TransportAtrapa}
+ */
+$wroc = static function (string $znacznikWAdresie, ?TransportAtrapa $atrapa = null) use ($orderId): array {
+    $atrapa ??= new TransportAtrapa();
+
+    $dispatcher = Joomla\CMS\Factory::getContainer()->get('dispatcher');
+    $wtyczka    = new WtyczkaTestowa($dispatcher, ['name' => 'przelewy24', 'type' => 'hikashoppayment']);
+    $wtyczka->transport = $atrapa;
+
+    $wejscie = Joomla\CMS\Factory::getApplication()->input;
+    $wejscie->set('p24_action', 'return');
+    $wejscie->set('order_id', $orderId);
+    $wejscie->set('p24_return', $znacznikWAdresie);
+
+    $statusy = [];
+    $wynik   = $wtyczka->onPaymentNotification($statusy);
+
+    return ['wynik' => $wynik, 'wtyczka' => $wtyczka, 'wywolan' => count($atrapa->wywolania), 'atrapa' => $atrapa];
+};
+
+$znacznikPowrotu = $pomocnik->znacznikPowrotu($zamowienie);
+$adresPowrotu    = $pomocnik->adresPowrotu($zamowienie);
+
+wynik('adres powrotu prowadzi do wtyczki', str_contains($adresPowrotu, 'task=notify') && str_contains($adresPowrotu, 'p24_action=return') && str_contains($adresPowrotu, 'order_id=' . $orderId));
+wynik('adres powrotu nie prowadzi wprost do podziekowania', !str_contains($adresPowrotu, 'task=after_end'));
+wynik('strona powrotu wyswietla sie w szablonie witryny', str_contains($adresPowrotu, 'skip_system_notification=1'));
+wynik('adres powrotu niesie wlasny znacznik', str_contains($adresPowrotu, 'p24_return=' . $znacznikPowrotu)
+    && $znacznikPowrotu !== $znacznik && $znacznikPowrotu !== md5($orderToken) && $znacznikPowrotu !== $orderToken);
+
+$odNowa();
+$r = $wroc('');
+wynik('pusty znacznik: P24 nie jest pytane, bez przekierowania', $r['wywolan'] === 0 && $r['wtyczka']->przekierowanie === null);
+$r = $wroc($znacznik);
+wynik('znacznik ponowienia nie otwiera powrotu', $r['wywolan'] === 0 && $r['wtyczka']->przekierowanie === null);
+
+// Nieudana płatność: P24 zna transakcję, ale wpłaty nie ma.
+$r = $wroc($znacznikPowrotu, new TransportAtrapa(poAdresie: [TransportAtrapa::STAN => $stanWP24(0)]));
+
+wynik('nieudana platnosc: klient NIE trafia na podziekowanie', $r['wtyczka']->przekierowanie === null, (string) $r['wtyczka']->przekierowanie);
+wynik('nieudana platnosc: czyta, ze platnosc nie zostala potwierdzona', is_string($r['wynik'])
+    && str_contains($r['wynik'], 'hikashop_przelewy24_unpaid')
+    && str_contains($r['wynik'], $tekst('RETURN_UNPAID_TITLE'))
+    && str_contains($r['wynik'], $tekst('RETURN_UNPAID')));
+wynik('nieudana platnosc: przycisk ponowienia', is_string($r['wynik']) && str_contains($r['wynik'], 'hikashop_przelewy24_retry') && str_contains($r['wynik'], 'p24_action=retry'));
+wynik('nieudana platnosc: bez naglowka o nierozpoczetej platnosci i bez podziekowania', is_string($r['wynik']) && !str_contains($r['wynik'], $tekst('PAYMENT_NOT_STARTED')) && !str_contains($r['wynik'], 'hikashop_przelewy24_paid'));
+wynik('nieudana platnosc: zamowienie zostaje nieoplacone', $statusZamowienia() === 'created', $statusZamowienia());
+wynik('nieudana platnosc: sam powrot niczego w P24 nie rejestruje ani nie weryfikuje', $r['atrapa']->ile(TransportAtrapa::REJESTRACJA) === 0 && $r['atrapa']->ile(TransportAtrapa::WERYFIKACJA) === 0);
+wynik('nieudana platnosc: sesja zamowienia bez zmian', (string) ($daneTransakcji()->{OrderPaymentData::SESSION_ID} ?? '') === $sessionId);
+
+// Klient zrezygnował, zanim wybrał sposób zapłaty: P24 nie zna transakcji.
+$r = $wroc($znacznikPowrotu);
+wynik('rezygnacja przed wyborem metody: ta sama strona, bez podziekowania', $r['wtyczka']->przekierowanie === null && is_string($r['wynik']) && str_contains($r['wynik'], $tekst('RETURN_UNPAID_TITLE')));
+
+// Udana płatność: wpłata jest w P24, a powiadomienie mogło jeszcze nie dojść.
+$r  = $wroc($znacznikPowrotu, $zaplacone($stanWP24(1)));
+$po = $daneTransakcji();
+
+wynik('udana platnosc: weryfikacja bez czekania na powiadomienie', $r['atrapa']->ile(TransportAtrapa::WERYFIKACJA) === 1);
+wynik('udana platnosc: zamowienie oplacone', $statusZamowienia() === $config->verifiedStatus, $statusZamowienia());
+wynik('udana platnosc: znacznik weryfikacji zapisany', (string) ($po->{OrderPaymentData::VERIFIED_AT} ?? '') !== '');
+wynik('udana platnosc: dopiero teraz podziekowanie', str_contains((string) $r['wtyczka']->przekierowanie, 'task=after_end') && str_contains((string) $r['wtyczka']->przekierowanie, 'order_id=' . $orderId), (string) $r['wtyczka']->przekierowanie);
+wynik('udana platnosc: bez nowej rejestracji', $r['atrapa']->ile(TransportAtrapa::REJESTRACJA) === 0);
+
+// Powiadomienie zdążyło przed klientem albo klient odświeżył adres powrotu.
+$r = $wroc($znacznikPowrotu, $zaplacone($stanWP24(2)));
+wynik('zamowienie juz oplacone: bez pytan do P24, od razu podziekowanie', $r['wywolan'] === 0 && str_contains((string) $r['wtyczka']->przekierowanie, 'task=after_end'), (string) $r['wywolan']);
+
+// P24 nie odpowiada: nie wiemy, jak było, więc nie zgadujemy w żadną stronę.
+$odNowa();
+$r = $wroc($znacznikPowrotu, new TransportAtrapa(500, '{"error":"blad","code":500}', []));
+wynik('P24 nie odpowiada: bez podziekowania i bez zmiany statusu', $r['wtyczka']->przekierowanie === null && $statusZamowienia() === 'created');
+wynik('P24 nie odpowiada: neutralna informacja', is_string($r['wynik']) && str_contains($r['wynik'], $tekst('RETURN_UNKNOWN')));
+wynik('P24 nie odpowiada: przycisk ponowienia zostaje', is_string($r['wynik']) && str_contains($r['wynik'], 'hikashop_przelewy24_retry'));
+
+// Wpłata jest, ale weryfikacja się nie udała: klient nie może płacić drugi raz.
+$odNowa();
+$r = $wroc($znacznikPowrotu, $odmowa());
+wynik('wplata bez udanej weryfikacji: informacja, ze jest odnotowana', is_string($r['wynik']) && str_contains($r['wynik'], $tekst('PAID_PENDING')));
+wynik('wplata bez udanej weryfikacji: bez przycisku ponowienia i bez podziekowania', is_string($r['wynik']) && !str_contains($r['wynik'], 'hikashop_przelewy24_retry') && $r['wtyczka']->przekierowanie === null);
+wynik('wplata bez udanej weryfikacji: zamowienie zostaje nieoplacone, sprzedawca zawiadomiony', $statusZamowienia() === 'created' && count($r['wtyczka']->alerty) === 1);
+
+// Zamówienie anulowane w międzyczasie: nie ma czego ponawiać.
+$odNowa();
+$ustawStatus('cancelled');
+$r = $wroc($znacznikPowrotu, new TransportAtrapa(poAdresie: [TransportAtrapa::STAN => $stanWP24(0)]));
+wynik('anulowane zamowienie: bez przycisku ponowienia', is_string($r['wynik']) && !str_contains($r['wynik'], 'hikashop_przelewy24_retry') && $r['wtyczka']->przekierowanie === null);
+$ustawStatus('created');
 
 echo PHP_EOL . str_repeat('-', 60) . PHP_EOL;
 echo 'Zdane: ' . $zdane . ', niezdane: ' . $bledy . PHP_EOL;

@@ -208,12 +208,11 @@ które mnoży przed zaokrągleniem. Popularny zapis `round($cena, 2) * 100` daje
 dla około 9% kwot liczbę zmiennoprzecinkową, na przykład 1,15 zł jako
 `114.99999999999999`, i taką wartość `json_encode` wysyła do P24.
 
-**Jeden `sessionId` na zamówienie, nie na próbę zapłaty.** To rozstrzygnięcie
-kosztowało nas prawdziwą wpadkę, więc warto je znać.
+**Każda próba zapłaty ma własny `sessionId`, a zamówienie pamięta wszystkie.**
+To rozstrzygnięcie zmieniało się dwa razy, więc warto znać oba powody.
 
-Pierwotnie każda próba dostawała własny identyfikator. Wydawało się to
-bezpieczniejsze, bo powiadomienie zawsze wskazywało jedną, konkretną próbę.
-W praktyce otwierało drogę do podwójnej zapłaty:
+Pierwotnie każda próba dostawała własny identyfikator, a zapisany przy
+zamówieniu był nadpisywany. Otwierało to drogę do podwójnej zapłaty:
 
 1. Klient płaci. P24 księguje transakcję
 2. Powiadomienie nie dociera (awaria, timeout, adres nieosiągalny)
@@ -222,38 +221,79 @@ W praktyce otwierało drogę do podwójnej zapłaty:
    przy zamówieniu. Klient płaci drugi raz, a powiadomienie o pierwszej
    zapłacie zostaje potem odrzucone jako dotyczące obcej sesji
 
-Teraz identyfikator powstaje raz, przy pierwszej próbie, i jest ponawiany.
-Rejestracja z tym samym identyfikatorem zwraca ten sam token, więc klient
-wraca do **tej samej** transakcji. Losowa część nadal chroni przed
-odgadnięciem, w odróżnieniu od gołego numeru zamówienia.
+Do 1.0.7 identyfikator powstawał więc raz i był ponawiany: P24 zwraca wtedy
+ten sam token, czyli tę samą transakcję. Okazało się, że tej samej transakcji
+po nieudanej płatności nie da się dokończyć. Jej strona płatności od razu
+odsyła klienta do sklepu, więc ponowienie kręciło się w kółko (sandbox,
+09.10.2026, szczegóły w rozdziale o zachowaniach P24).
 
-Dodatkowo zamówienie w statusie opłaconego nie pozwala rozpocząć płatności
-od nowa.
+Od 1.0.8 każda próba znów ma własny identyfikator, ale bez dawnej wady:
+
+- sesja poprzedniej próby nie jest nadpisywana, tylko przechodzi na listę
+  wcześniejszych sesji zamówienia (ostatnie 10)
+- przed każdą nową próbą wtyczka pyta P24 o **każdą** sesję zamówienia
+  i opłaconą potwierdza, zamiast zakładać kolejną transakcję
+- powiadomienie o wpłacie na dowolną sesję z listy należy do zamówienia.
+  Tak dochodzi przelew tradycyjny księgowany po godzinach i wpłata
+  z odnośnika w wiadomości od P24
+- druga wpłata za zweryfikowane już zamówienie nie jest weryfikowana, więc
+  zostaje w P24 do dyspozycji klienta
+
+Losowa część identyfikatora nadal chroni przed odgadnięciem, w odróżnieniu
+od gołego numeru zamówienia. Zamówienie w statusie opłaconego nie pozwala
+rozpocząć płatności od nowa.
 
 **Przed startem płatności pytamy P24, czy za zamówienie już nie zapłacono.**
-Jeden identyfikator sesji nie wystarcza, gdy powiadomienie nie dotrze wcale:
-sklep ma wtedy zamówienie nieopłacone i pokazuje „Zapłać teraz”, choć pieniądze
-są już w P24. Do 1.0.7 kliknięcie rejestrowało transakcję jeszcze raz i wysyłało
-klienta do bramki.
+Powiadomienie potrafi nie dotrzeć wcale: sklep ma wtedy zamówienie nieopłacone
+i pokazuje „Zapłać teraz”, choć pieniądze są już w P24. Do 1.0.7 kliknięcie
+rejestrowało transakcję jeszcze raz i wysyłało klienta do bramki.
 
 Od 1.0.8 każde ponowne rozpoczęcie płatności, z przycisku wtyczki i z „Zapłać
-teraz” HikaShopa, zaczyna się od `transaction/by/sessionId`. Jeżeli P24 ma
-wpłatę (stan 1 albo 2) w kwocie i walucie zamówienia, wtyczka od razu robi
-`transaction/verify` i potwierdza zamówienie tak samo jak po powiadomieniu.
-Klient zamiast bramki widzi informację, że za zamówienie już zapłacono.
-Pozostałe przypadki:
+teraz” HikaShopa, zaczyna się od `transaction/by/sessionId` dla każdej sesji
+zamówienia, od najnowszej. Jeżeli P24 ma wpłatę (stan 1 albo 2) w kwocie
+i walucie zamówienia, wtyczka od razu robi `transaction/verify` i potwierdza
+zamówienie tak samo jak po powiadomieniu. Klient zamiast bramki widzi
+informację, że za zamówienie już zapłacono. Pozostałe przypadki:
 
 - weryfikacja kończy się błędem: status zostaje, klient czyta, że wpłata jest
   odnotowana i żeby nie płacił ponownie, a sprzedawca dostaje jedną wiadomość
 - wpłata w innej kwocie albo walucie niż zamówienie: bez weryfikacji i bez
   nowej płatności, klient ma się skontaktować ze sklepem
 - wpłata zwrócona w P24 (stan 3): nowej płatności nie zaczynamy
-- P24 nie zna transakcji albo nie odpowiada: zwykła rejestracja, jak dotąd
+- P24 nie zna transakcji albo nie ma wpłaty: nowa sesja i zwykła rejestracja
+- P24 nie odpowiada: nowej transakcji **nie** zakładamy, bo nie wiemy, czy
+  poprzednia próba nie została opłacona. Klient może spróbować za chwilę
 
 Pierwsze złożenie zamówienia nie kosztuje dodatkowego pytania, bo zamówienie
 nie ma jeszcze zapisanej sesji. To nadal nie jest uznawanie zapłaty na słowo
 przeglądarki: o stan pytamy P24 z serwera, a status zmienia dopiero udane
 `transaction/verify`.
+
+**Klient wracający z bramki nie trafia wprost na podziękowanie.** P24 odsyła
+klienta na `urlReturn` po zapłacie, po błędzie i po rezygnacji, bez żadnej
+informacji o wyniku, a po nieudanej płatności nie pokazuje mu nawet
+komunikatu. Do 1.0.7 adres powrotu prowadził do strony podziękowania
+HikaShopa, więc nieudana płatność wyglądała w sklepie jak udane zamówienie.
+
+Od 1.0.8 adres powrotu prowadzi do wtyczki, która zadaje P24 to samo pytanie
+co przed nową próbą:
+
+- wpłata jest: weryfikacja, status opłaconego i dopiero wtedy podziękowanie.
+  Sklep nie musi czekać na powiadomienie, więc działa to także tam, gdzie
+  powiadomienia nie dochodzą
+- wpłaty nie ma: strona „Płatność nie została potwierdzona” z przyciskiem
+  ponowienia. Tekst jest ostrożny, bo P24 nie odróżnia tu płatności nieudanej
+  od przelewu tradycyjnego, który dopiero idzie
+- P24 nie odpowiada: neutralna informacja, bez zgadywania w żadną stronę
+
+Przycisk „Przejdź do płatności” na stronie przejścia też prowadzi przez
+sklep, a nie wprost do bramki. Klient klika go zwykle po powrocie z bramki
+przyciskiem „wstecz”, a zapisany na stronie adres bramki jest wtedy martwy.
+
+Adresy, które otwiera klient (powrót i ponowienie), niosą parametr
+`skip_system_notification=1`. Bez niego wtyczka systemowa HikaShopa
+przechwytuje zadanie `notify` i oddaje wynik bez szablonu witryny, czyli
+goły tekst na białym tle. Adres powiadomień dla P24 tego parametru nie ma.
 
 **Ponowienie zapłaty bez płatnego HikaShopa.** Gdy płatność nie ruszy,
 klient widzi przycisk „Spróbuj zapłacić ponownie”. Do wersji 1.0.3 prowadził
@@ -329,15 +369,28 @@ Przelewy24 dla WooCommerce loguje się identyfikatorem sprzedawcy, więc robimy
 tak samo. Na koncie, na którym oba identyfikatory są równe, tej różnicy nie
 da się sprawdzić.
 
-**`transaction/by/sessionId` nie widzi transakcji przed zapłatą.** Dla
-zarejestrowanej, ale nieopłaconej transakcji P24 odpowiada `HTTP 404
-Transaction not found`. Strona powrotu klienta nie może więc opierać się
-na tym endpoincie, bo dla porzuconej płatności nie dostanie nic.
+**`transaction/by/sessionId` zmienia odpowiedź razem z losem transakcji.**
+Dopóki klient nie wybrał sposobu zapłaty, P24 odpowiada `HTTP 404 Transaction
+not found`. Po wyborze sposobu zapłaty transakcja dostaje numer i stan 0, bez
+względu na to, czy płatność się nie udała, została porzucona, czy przelew
+dopiero idzie. Stan 1 pojawia się od razu po zapłacie, jeszcze zanim klient
+wróci do sklepu, a stan 2 po `transaction/verify`. Strona powrotu klienta
+może się więc na tym pytaniu opierać, byle nie brała stanu 0 za odmowę.
 
-**Rejestracja jest idempotentna względem `sessionId`.** Na tym opiera się
-ochrona przed podwójną zapłatą. Powtórne wysłanie
+**Rejestracja jest idempotentna względem `sessionId`.** Powtórne wysłanie
 `transaction/register` z tym samym identyfikatorem sesji i tą samą kwotą
-nie kończy się błędem — P24 zwraca ten sam token co za pierwszym razem.
+nie kończy się błędem: P24 zwraca ten sam token co za pierwszym razem.
+Licznik 15 minut na stronie płatności nie zaczyna się przy tym od nowa.
+
+**Transakcji po nieudanej płatności nie da się dokończyć.** Po wyborze
+„Błąd płatności”, „Brak wpłaty” albo „Oczekiwanie na wpłatę” w banku testowym
+P24 odsyła klienta prosto na `urlReturn`, bez komunikatu. Ponowne wejście na
+stronę płatności z tym samym tokenem kończy się tak samo: `trnRequest`
+przechodzi od razu w `trnResult` i wraca do sklepu, także w czystej
+przeglądarce. Powtórna rejestracja tej samej sesji przywraca listę metod, ale
+wybranie metody użytej poprzednio znów odsyła do sklepu. Nowa sesja daje nowy
+token i opłaca się normalnie w tej samej przeglądarce, a stara sesja zostaje
+w stanie 0. Sprawdzone 09.10.2026.
 
 **Weryfikacja nieopłaconej transakcji kończy się błędem, nie odpowiedzią
 negatywną.** P24 zwraca `HTTP 400` z komunikatem `Error call 2`, a nie
@@ -425,8 +478,8 @@ php tests/sandbox.php      # prawdziwe API P24, wymaga danych sandboxa
 php tests/joomla.php       # wtyczka w zainstalowanej Joomli z HikaShopem
 php tests/notification.php # sciezka powiadomienia, siec podstawiona atrapa
 php tests/blik.php         # BLIK w kasie, siec podstawiona atrapa
-php tests/duplikaty.php    # czy ponowienie nie dubluje transakcji, zywe P24
-php tests/retry.php        # ponowienie zaplaty i wplata, o ktorej sklep nie wie, siec podstawiona atrapa
+php tests/duplikaty.php    # sesje zamowienia i ochrona przed podwojna zaplata, zywe P24
+php tests/retry.php        # ponowienie zaplaty, powrot z bramki i wplata, o ktorej sklep nie wie, siec podstawiona atrapa
 php tests/email.php        # adres e-mail klienta, takze goscia
 ```
 
