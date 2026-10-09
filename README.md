@@ -225,6 +225,13 @@ Zainstaluj w panelu Joomli. Budowanie wymaga rozszerzenia `zip` w PHP.
 Po instalacji metodę płatności dodaje się w HikaShopie: System → Metody
 płatności → Nowa → Przelewy24.
 
+Od 1.0.10 pierwszy wiersz konfiguracji metody płatności podaje wersję
+zainstalowanej wtyczki i datę jej wydania. Joomla pokazuje wersję tylko na
+liście rozszerzeń (System → Zarządzaj → Rozszerzenia), a przy wyłączonym
+serwerze aktualizacji nic nie podpowiada, że jest nowsza. Gdy manifest
+instalacji podaje inną wersję niż pliki wtyczki, czyli po instalacji przerwanej
+w połowie, ten sam wiersz pokazuje ostrzeżenie.
+
 Wtyczka instaluje dwa logotypy, `przelewy24.svg` i `BLIK.svg`, do własnego
 katalogu `media/plg_hikashoppayment_przelewy24`, a potem kopiuje je do obrazków
 metod płatności HikaShopa (`media/com_hikashop/images/payment`), żeby dało się

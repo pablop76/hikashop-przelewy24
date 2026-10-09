@@ -68,7 +68,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
     /**
      * Wersja wtyczki, wysyłana do P24 w nagłówku diagnostycznym.
      */
-    public const VERSION = '1.0.9';
+    public const VERSION = '1.0.10';
 
     protected $autoloadLanguage = true;
 
@@ -202,6 +202,32 @@ class Przelewy24 extends \hikashopPaymentPlugin
     protected const P24_PENDING   = 'pending';
     protected const P24_MISMATCH  = 'mismatch';
     protected const P24_REFUNDED  = 'refunded';
+
+    /**
+     * Wersja zainstalowanej wtyczki, do pokazania w konfiguracji metody płatności.
+     *
+     * Joomla podaje wersję tylko na liście rozszerzeń, a HikaShop nie
+     * podaje jej nigdzie. Przy wyłączonym serwerze aktualizacji sprzedawca
+     * nie miał jak sprawdzić, co ma zainstalowane.
+     *
+     * Wersję bierzemy z kodu, bo to on naprawdę działa. Manifest dokłada
+     * datę wydania i pozwala zauważyć instalację przerwaną w połowie, po
+     * której pliki są z jednej wersji, a manifest z innej.
+     *
+     * @param  string|null  $manifestPath  inny manifest niż zainstalowany, na potrzeby testów
+     *
+     * @return array{wersja: string, data: string, manifest: string}
+     */
+    public static function installedVersion($manifestPath = null)
+    {
+        $manifest = @simplexml_load_file($manifestPath ?? JPATH_PLUGINS . '/hikashoppayment/przelewy24/przelewy24.xml');
+
+        return [
+            'wersja'   => self::VERSION,
+            'data'     => $manifest !== false ? trim((string) $manifest->creationDate) : '',
+            'manifest' => $manifest !== false ? trim((string) $manifest->version) : '',
+        ];
+    }
 
     /**
      * Wartości domyślne przy zakładaniu metody płatności.

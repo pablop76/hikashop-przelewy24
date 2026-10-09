@@ -497,6 +497,13 @@ if ($manifest !== false) {
     $wersjaManifest = trim((string) $manifest->version);
     $aktualizacje   = simplexml_load_file(__DIR__ . '/../przelewy24_update.xml');
 
+    // Wersję z kodu wtyczka pokazuje w konfiguracji metody płatności
+    // i wysyła do P24. Rozjazd z manifestem oznaczałby, że panel Joomli
+    // i panel HikaShopa podają dwie różne wersje tej samej instalacji.
+    preg_match("/const VERSION = '([^']+)'/", (string) file_get_contents(__DIR__ . '/../plugin/src/Extension/Przelewy24.php'), $wKodzie);
+    sprawdz('wersja w kodzie wtyczki zgadza sie z manifestem', $wersjaManifest, $wKodzie[1] ?? null);
+    sprawdz('manifest ma date wydania', 1, preg_match('/^\d{4}-\d{2}-\d{2}$/', trim((string) $manifest->creationDate)));
+
     if ($aktualizacje !== false) {
         sprawdz(
             'wersja w serwerze aktualizacji zgadza sie z manifestem',

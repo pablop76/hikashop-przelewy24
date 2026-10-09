@@ -14,7 +14,26 @@ use Joomla\CMS\Language\Text;
 defined('_JEXEC') or die('Restricted access');
 
 $params = $this->element->payment_params ?? new stdClass();
+$wersja = \Pablop76\Plugin\HikashopPayment\Przelewy24\Extension\Przelewy24::installedVersion();
 ?>
+<tr>
+	<td class="key">
+		<label>
+			<?php echo Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_VERSION'); ?>
+		</label>
+	</td>
+	<td>
+		<strong class="hikashop_przelewy24_version"><?php echo $this->escape($wersja['wersja']); ?></strong>
+		<?php if ($wersja['data'] !== '') : ?>
+			<?php echo $this->escape(Text::sprintf('PLG_HIKASHOPPAYMENT_PRZELEWY24_VERSION_RELEASED', $wersja['data'])); ?>
+		<?php endif; ?>
+		<?php if ($wersja['manifest'] !== '' && $wersja['manifest'] !== $wersja['wersja']) : ?>
+			<p class="hikashop_help">
+				<?php echo $this->escape(Text::sprintf('PLG_HIKASHOPPAYMENT_PRZELEWY24_VERSION_MISMATCH', $wersja['manifest'])); ?>
+			</p>
+		<?php endif; ?>
+	</td>
+</tr>
 <tr>
 	<td class="key">
 		<label for="data[payment][payment_params][test_mode]">

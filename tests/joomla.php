@@ -142,6 +142,73 @@ $klucz = 'PLG_HIKASHOPPAYMENT_PRZELEWY24_GO_TO_GATEWAY';
 $tekst = Joomla\CMS\Language\Text::_($klucz);
 sprawdz('klucz jezykowy sie tlumaczy', $tekst !== $klucz, $tekst);
 
+// Joomla podaje wersję tylko na liście rozszerzeń, a przy wyłączonym serwerze
+// aktualizacji sprzedawca nie miał jak sprawdzić, co ma zainstalowane.
+echo PHP_EOL . '7. Wersja wtyczki w konfiguracji metody platnosci' . PHP_EOL;
+
+$manifestWtyczki = simplexml_load_file($katalog . '/przelewy24.xml');
+$wersja          = $wtyczka::installedVersion();
+
+sprawdz('wersja pochodzi z kodu wtyczki', $wersja['wersja'] === $wtyczka::VERSION && $wersja['wersja'] !== '', $wersja['wersja']);
+sprawdz('zgadza sie z zainstalowanym manifestem', $wersja['manifest'] === trim((string) $manifestWtyczki->version), $wersja['manifest']);
+sprawdz('data wydania z manifestu', $wersja['data'] === trim((string) $manifestWtyczki->creationDate) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $wersja['data']) === 1, $wersja['data']);
+
+$obcyManifest = tempnam(sys_get_temp_dir(), 'p24');
+file_put_contents($obcyManifest, '<?xml version="1.0"?><extension><creationDate>2020-01-02</creationDate><version>0.0.1</version></extension>');
+$przerwana = $wtyczka::installedVersion($obcyManifest);
+unlink($obcyManifest);
+
+sprawdz('instalacja przerwana w polowie: manifest inny niz kod', $przerwana['manifest'] === '0.0.1' && $przerwana['wersja'] === $wtyczka::VERSION);
+$brak = $wtyczka::installedVersion($obcyManifest);
+sprawdz('brak manifestu nie wywraca panelu', $brak['wersja'] === $wtyczka::VERSION && $brak['data'] === '' && $brak['manifest'] === '');
+
+/**
+ * Formularz konfiguracji HikaShop wczytuje jako widok. Tu wystarcza atrapa
+ * z tym, czego plik używa: dane metody, lista statusów i escape().
+ */
+$widokKonfiguracji = new class {
+    public $element;
+
+    public $data = [];
+
+    public function escape($wartosc)
+    {
+        return htmlspecialchars((string) $wartosc, ENT_QUOTES, 'UTF-8');
+    }
+
+    public function wyrysuj(string $plik): string
+    {
+        ob_start();
+        include $plik;
+
+        return (string) ob_get_clean();
+    }
+};
+$widokKonfiguracji->element                = (object) ['payment_params' => (object) []];
+$widokKonfiguracji->data['order_statuses'] = new class {
+    public function display($nazwa, $wartosc)
+    {
+        return '<select name="' . $nazwa . '"></select>';
+    }
+};
+
+// Pola tak/nie HikaShop rysuje przez dokument aplikacji, a ten powstaje
+// dopiero w execute(), którego tu nie wołamy.
+Joomla\CMS\Factory::getApplication()->loadDocument();
+
+$formularz = $widokKonfiguracji->wyrysuj($katalog . '/przelewy24_configuration.php');
+$opisPola  = htmlspecialchars(Joomla\CMS\Language\Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_VERSION'), ENT_QUOTES, 'UTF-8');
+
+sprawdz('formularz konfiguracji sie rysuje', str_contains($formularz, 'data[payment][payment_params][merchant_id]'));
+sprawdz('formularz podaje wersje wtyczki', (bool) preg_match('#hikashop_przelewy24_version">' . preg_quote($wtyczka::VERSION, '#') . '</strong>#', $formularz));
+sprawdz('pole ma przetlumaczony opis', $opisPola !== 'PLG_HIKASHOPPAYMENT_PRZELEWY24_VERSION' && str_contains($formularz, $opisPola), $opisPola);
+sprawdz('formularz podaje date wydania', str_contains($formularz, $wersja['data']));
+sprawdz('wersja stoi w pierwszym wierszu formularza', strpos($formularz, 'hikashop_przelewy24_version') < strpos($formularz, 'payment_params][test_mode]'));
+sprawdz('bez ostrzezenia, gdy manifest zgadza sie z kodem', !str_contains(
+    $formularz,
+    htmlspecialchars(Joomla\CMS\Language\Text::sprintf('PLG_HIKASHOPPAYMENT_PRZELEWY24_VERSION_MISMATCH', $wersja['manifest']), ENT_QUOTES, 'UTF-8')
+));
+
 echo PHP_EOL . str_repeat('-', 60) . PHP_EOL;
 echo 'Zdane: ' . $zdane . ', niezdane: ' . $bledy . PHP_EOL;
 
