@@ -22,11 +22,23 @@ return new class () implements ServiceProviderInterface {
         $container->set(
             InstallerScriptInterface::class,
             new class () implements InstallerScriptInterface {
+                /*
+                 * Najstarsze wersje, na których wtyczka przeszła testy. Do 1.0.12
+                 * deklarowała też Joomlę 5, HikaShopa 5 i PHP 8.1, choć nikt ich
+                 * nie sprawdzał. Joomla 6 sama wymaga PHP 8.3.
+                 */
+
                 /** Minimalna wersja Joomli. */
-                private string $minimumJoomla = '5.0';
+                private string $minimumJoomla = '6.0';
 
                 /** Minimalna wersja PHP. */
-                private string $minimumPhp = '8.1';
+                private string $minimumPhp = '8.3';
+
+                /** Minimalna wersja HikaShopa. */
+                private string $minimumHikaShop = '6.6';
+
+                /** Manifest HikaShopa, z którego czytamy jego wersję. */
+                private string $manifestHikaShopa = JPATH_ADMINISTRATOR . '/components/com_hikashop/hikashop.xml';
 
                 /**
                  * Pliki z wcześniejszych wersji, których już nie ma w paczce.
@@ -73,7 +85,29 @@ return new class () implements ServiceProviderInterface {
                         );
                     }
 
+                    // Starszego HikaShopa nie testowaliśmy. Odinstalowania to nie blokuje.
+                    $hikaShop = $type !== 'uninstall' ? $this->wersjaHikaShopa() : '';
+
+                    if ($hikaShop !== '' && version_compare($hikaShop, $this->minimumHikaShop, '<')) {
+                        $this->komunikat(
+                            'Wtyczka wymaga HikaShopa ' . $this->minimumHikaShop . ' lub nowszego. Zainstalowany jest ' . $hikaShop . '.',
+                            'error'
+                        );
+
+                        return false;
+                    }
+
                     return true;
+                }
+
+                /**
+                 * Wersja zainstalowanego HikaShopa albo pusty ciąg, gdy nie da się jej odczytać.
+                 */
+                private function wersjaHikaShopa(): string
+                {
+                    $manifest = is_file($this->manifestHikaShopa) ? @simplexml_load_file($this->manifestHikaShopa) : false;
+
+                    return $manifest !== false ? trim((string) $manifest->version) : '';
                 }
 
                 public function install(InstallerAdapter $parent): bool

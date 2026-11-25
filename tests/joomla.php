@@ -209,6 +209,41 @@ sprawdz('bez ostrzezenia, gdy manifest zgadza sie z kodem', !str_contains(
     htmlspecialchars(Joomla\CMS\Language\Text::sprintf('PLG_HIKASHOPPAYMENT_PRZELEWY24_VERSION_MISMATCH', $wersja['manifest']), ENT_QUOTES, 'UTF-8')
 ));
 
+echo PHP_EOL . '8. Instalator przyjmuje tylko przetestowane wersje' . PHP_EOL;
+
+// Skrypt instalatora zainstalowanej wtyczki, czyli ten z paczki.
+$dostawca = require JPATH_PLUGINS . '/hikashoppayment/przelewy24/script.php';
+$kontener = new Joomla\DI\Container();
+$dostawca->register($kontener);
+$instalator = $kontener->get(Joomla\CMS\Installer\InstallerScriptInterface::class);
+$adapter    = (new ReflectionClass(Joomla\CMS\Installer\Adapter\PluginAdapter::class))->newInstanceWithoutConstructor();
+$manifestHs = new ReflectionProperty($instalator, 'manifestHikaShopa');
+$prawdziwy  = $manifestHs->getValue($instalator);
+
+/**
+ * Wynik preflight() przy HikaShopie w podanej wersji (null: bez manifestu).
+ */
+$przyHikaShopie = static function (?string $wersjaHs, string $typ = 'update') use ($instalator, $adapter, $manifestHs): bool {
+    $plik = tempnam(sys_get_temp_dir(), 'hs');
+    file_put_contents($plik, '<?xml version="1.0"?><extension><version>' . $wersjaHs . '</version></extension>');
+    $manifestHs->setValue($instalator, $wersjaHs === null ? $plik . '.brak' : $plik);
+
+    try {
+        return $instalator->preflight($typ, $adapter);
+    } finally {
+        unlink($plik);
+    }
+};
+
+$manifestHs->setValue($instalator, $prawdziwy);
+sprawdz('ta instalacja przechodzi (Joomla ' . JVERSION . ', PHP ' . PHP_VERSION . ')', $instalator->preflight('update', $adapter) === true);
+sprawdz('HikaShop 6.6.0 przechodzi', $przyHikaShopie('6.6.0') === true);
+sprawdz('HikaShop 6.5.9 jest odrzucany', $przyHikaShopie('6.5.9') === false);
+sprawdz('HikaShop 5.1.2 jest odrzucany', $przyHikaShopie('5.1.2') === false);
+sprawdz('stary HikaShop nie blokuje odinstalowania', $przyHikaShopie('5.1.2', 'uninstall') === true);
+sprawdz('nieczytelna wersja HikaShopa nie blokuje instalacji', $przyHikaShopie(null) === true);
+$manifestHs->setValue($instalator, $prawdziwy);
+
 echo PHP_EOL . str_repeat('-', 60) . PHP_EOL;
 echo 'Zdane: ' . $zdane . ', niezdane: ' . $bledy . PHP_EOL;
 

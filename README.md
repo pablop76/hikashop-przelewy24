@@ -1,14 +1,14 @@
 # Przelewy24 dla HikaShop
 
-Wtyczka płatności Przelewy24 dla sklepu HikaShop działającego na Joomli 5 i 6.
+Wtyczka płatności Przelewy24 dla sklepu HikaShop działającego na Joomli 6.
 
 ## Wymagania
 
 | Składnik | Wersja |
 | --- | --- |
-| Joomla | 5.0 lub nowsza (zgodna z 6.x) |
-| HikaShop | 5.0 lub nowsza |
-| PHP | 8.1 minimum, zalecane 8.3 |
+| Joomla | 6.x (przetestowane na 6.1 i 6.2) |
+| HikaShop | 6.6 lub nowszy (przetestowane na 6.6, 6.7 i 6.8) |
+| PHP | 8.3 lub nowsze, tyle wymaga Joomla 6 (przetestowane na 8.3) |
 | Konto | Przelewy24 z dostępem do REST API |
 
 ## Stan prac
@@ -528,7 +528,7 @@ plugin/
   services/provider.php          rejestracja w kontenerze Joomli
   src/
     Extension/Przelewy24.php     klasa wtyczki
-    Payment/                     integracja P24, PHP 8.1+
+    Payment/                     integracja P24
   language/                      pl-PL i en-GB
 tests/
   run.php                        biblioteka, bez Joomli i bez sieci
@@ -544,7 +544,7 @@ tests/
 
 ### Dlaczego most zgodności
 
-Wtyczka jest zbudowana zgodnie z zaleceniami Joomli 5: przestrzeń nazw
+Wtyczka jest zbudowana zgodnie z zaleceniami Joomli: przestrzeń nazw
 zadeklarowana w manifeście, klasa w `src/Extension`, rejestracja przez
 `services/provider.php`.
 

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<extension type="plugin" version="5.0" method="upgrade" group="hikashoppayment">
+<extension type="plugin" version="6.0" method="upgrade" group="hikashoppayment">
 	<!--
 		Nazwa dosłowna, nie klucz językowy. HikaShop w części widoków
 		wypisuje kolumnę name wprost z bazy, bez JText::_(), więc klucz
@@ -8,7 +8,7 @@
 	-->
 	<name>HikaShop Payment - Przelewy24</name>
 	<creationDate>2026-11-25</creationDate>
-	<version>1.0.12</version>
+	<version>1.0.13</version>
 	<author>Paweł Półtoraczyk</author>
 	<authorEmail>kontakt@web-service.com.pl</authorEmail>
 	<authorUrl>https://www.web-service.com.pl</authorUrl>

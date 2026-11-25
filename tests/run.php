@@ -515,6 +515,15 @@ if ($manifest !== false) {
             $nazwa,
             trim((string) $aktualizacje->update->name)
         );
+
+        // Minimalne wersje stoją w trzech miejscach: w instalatorze, w pliku
+        // aktualizacji i w README. Do 1.0.12 wszystkie trzy deklarowały
+        // Joomlę 5 i PHP 8.1, których nikt nie testował.
+        $instalator = (string) file_get_contents(__DIR__ . '/../plugin/script.php');
+        preg_match("/minimumPhp = '([^']+)'/", $instalator, $phpInstalatora);
+        preg_match("/minimumJoomla = '(\d+)\./", $instalator, $joomlaInstalatora);
+        sprawdz('PHP w serwerze aktualizacji takie samo jak w instalatorze', $phpInstalatora[1] ?? null, trim((string) $aktualizacje->update->php_minimum));
+        sprawdz('serwer aktualizacji obejmuje tylko glowna wersje Joomli z instalatora', ($joomlaInstalatora[1] ?? '?') . '\.[0-9]+', (string) $aktualizacje->update->targetplatform['version']);
     }
 }
 
