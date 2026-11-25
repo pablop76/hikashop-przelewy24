@@ -457,7 +457,10 @@ zarówno z pól kontekstu, jak i z treści komunikatów.
 **Formularz konfiguracji nie pokazuje kluczy.** Do 1.0.13 klucz CRC i klucz API
 stały w źródle strony panelu jako wartość pola hasła. Od 1.0.14 pola są puste,
 z dopiskiem, że klucz jest zapisany. Puste pole przy zapisie zostawia zapisany
-klucz bez zmian, a wpisanie nowej wartości go zastępuje. W bazie klucze nadal
+klucz bez zmian, a wpisanie nowej wartości go zastępuje. Pola kluczy mają
+`autocomplete="new-password"`: bez tego przeglądarka wpisywała w puste pole
+zapisane hasło do panelu, a login w pole identyfikatora sklepu nad nim.
+Identyfikator sklepu, który nie jest liczbą, zapis czyści. W bazie klucze nadal
 leżą jawnie, tak jak u wszystkich wtyczek płatności HikaShopa.
 
 ## Zachowania P24 ustalone na sandboksie

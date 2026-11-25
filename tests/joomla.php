@@ -278,6 +278,19 @@ sprawdz('wpisany klucz zastepuje zapisany', $poZapisie->crc_key === 'nowy-crc-12
 $poZapisie = $zapisz(['crc_key' => '', 'api_key' => ''], 0);
 sprawdz('nowa metoda: puste pola zostaja puste', $poZapisie->crc_key === '' && $poZapisie->api_key === '');
 
+// Puste pole hasla sciagalo autouzupelnianie przegladarki: zapisane haslo do
+// panelu ladowalo w kluczu CRC, a login w polu nad nim, czyli w identyfikatorze
+// sklepu (serwer testowy, 25.11.2026). Atrybut new-password mowi przegladarce,
+// ze to nie jest pole logowania.
+sprawdz('pola kluczy nie przyjmuja zapisanych hasel przegladarki', substr_count($zKluczami, 'type="password" autocomplete="new-password"') === 2);
+sprawdz('pola numerow bez autouzupelniania', (bool) preg_match('#autocomplete="off"[^>]*name="data\[payment\]\[payment_params\]\[pos_id\]"#s', $zKluczami)
+    && (bool) preg_match('#autocomplete="off"[^>]*name="data\[payment\]\[payment_params\]\[merchant_id\]"#s', $zKluczami));
+
+$poZapisie = $zapisz(['pos_id' => 'pablop76', 'crc_key' => '', 'api_key' => ''], $metodaSklepu['id']);
+sprawdz('login w polu identyfikatora sklepu nie zostaje w konfiguracji', $poZapisie->pos_id === '', $poZapisie->pos_id);
+$poZapisie = $zapisz(['pos_id' => ' 271810 ', 'crc_key' => '', 'api_key' => ''], 0);
+sprawdz('liczba w polu identyfikatora sklepu zostaje', trim($poZapisie->pos_id) === '271810', $poZapisie->pos_id);
+
 echo PHP_EOL . '10. Klient HTTP z frameworka Joomli, z proxy witryny' . PHP_EOL;
 
 // Klient HTTP z CMS zniknie w Joomli 8. Zamiennik z frameworka sam nie bierze

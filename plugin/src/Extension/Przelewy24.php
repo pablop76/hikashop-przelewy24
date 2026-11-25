@@ -316,7 +316,20 @@ class Przelewy24 extends \hikashopPaymentPlugin
         $wynik = parent::onPaymentConfigurationSave($element);
         $id    = (int) ($element->payment_id ?? 0);
 
-        if ($id <= 0 || !isset($element->payment_params) || !\is_object($element->payment_params)) {
+        if (!isset($element->payment_params) || !\is_object($element->payment_params)) {
+            return $wynik;
+        }
+
+        // Identyfikator sklepu to liczba. Przeglądarka potrafi wpisać w to pole
+        // zapisany login do panelu, bo stoi tuż nad polem hasła, i taki napis
+        // zostawał w konfiguracji. Puste pole znaczy „taki sam jak sprzedawcy”.
+        $pos = trim((string) ($element->payment_params->pos_id ?? ''));
+
+        if ($pos !== '' && !ctype_digit($pos)) {
+            $element->payment_params->pos_id = '';
+        }
+
+        if ($id <= 0) {
             return $wynik;
         }
 

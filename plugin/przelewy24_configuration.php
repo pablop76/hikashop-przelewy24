@@ -60,7 +60,7 @@ $zapisany = fn (string $klucz): string => (string) ($params->$klucz ?? '') !== '
 		</label>
 	</td>
 	<td>
-		<input type="text" inputmode="numeric" size="20"
+		<input type="text" inputmode="numeric" autocomplete="off" size="20"
 		       name="data[payment][payment_params][merchant_id]"
 		       value="<?php echo $this->escape($params->merchant_id ?? ''); ?>" />
 		<p class="hikashop_help">
@@ -75,7 +75,7 @@ $zapisany = fn (string $klucz): string => (string) ($params->$klucz ?? '') !== '
 		</label>
 	</td>
 	<td>
-		<input type="text" inputmode="numeric" size="20"
+		<input type="text" inputmode="numeric" autocomplete="off" size="20"
 		       name="data[payment][payment_params][pos_id]"
 		       value="<?php echo $this->escape($params->pos_id ?? ''); ?>" />
 		<p class="hikashop_help">
@@ -90,7 +90,7 @@ $zapisany = fn (string $klucz): string => (string) ($params->$klucz ?? '') !== '
 		</label>
 	</td>
 	<td>
-		<input type="password" autocomplete="off" size="40"
+		<input type="password" autocomplete="new-password" size="40"
 		       name="data[payment][payment_params][crc_key]"
 		       value=""<?php echo $zapisany('crc_key'); ?> />
 		<p class="hikashop_help">
@@ -105,7 +105,7 @@ $zapisany = fn (string $klucz): string => (string) ($params->$klucz ?? '') !== '
 		</label>
 	</td>
 	<td>
-		<input type="password" autocomplete="off" size="40"
+		<input type="password" autocomplete="new-password" size="40"
 		       name="data[payment][payment_params][api_key]"
 		       value=""<?php echo $zapisany('api_key'); ?> />
 		<p class="hikashop_help">
