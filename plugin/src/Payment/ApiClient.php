@@ -7,10 +7,11 @@
 
 namespace Pablop76\Plugin\HikashopPayment\Przelewy24\Payment;
 
-use Joomla\CMS\Http\HttpFactory;
+use Joomla\CMS\Factory;
+use Joomla\CMS\Version;
 use Joomla\Http\Http;
+use Joomla\Http\HttpFactory;
 use Joomla\Http\Response;
-use Joomla\Registry\Registry;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\ApiException;
 
 \defined('_JEXEC') or die;
@@ -218,9 +219,52 @@ final class ApiClient
     private function getHttp(): Http
     {
         if ($this->http === null) {
-            $this->http = HttpFactory::getHttp(new Registry(['timeout' => self::TIMEOUT_SECONDS]));
+            $this->http = (new HttpFactory())->getHttp(self::httpOptions());
         }
 
         return $this->http;
+    }
+
+    /**
+     * Opcje klienta HTTP, razem z serwerem proxy z konfiguracji witryny.
+     *
+     * Klient HTTP z CMS Joomli, oznaczony do usunięcia w Joomli 8, sam
+     * dokładał proxy witryny i nagłówek User-Agent Joomli. Klient z frameworka
+     * tego nie robi, więc dokładamy oba tutaj, proxy jako opcje cURL, tak jak
+     * robił to transport CMS.
+     *
+     * shortcut: proxy działa tylko z transportem cURL; gdyby hosting nie miał
+     * cURL-a, a witryna wymagała proxy, trzeba dołożyć opcje dla strumieni.
+     *
+     * @return array<string, mixed>
+     */
+    public static function httpOptions(): array
+    {
+        $opcje = ['timeout' => self::TIMEOUT_SECONDS];
+
+        if (!class_exists(Factory::class)) {
+            return $opcje;
+        }
+
+        $opcje['userAgent'] = (new Version())->getUserAgent('Joomla', true, false);
+
+        try {
+            $app = Factory::getApplication();
+        } catch (\Throwable) {
+            return $opcje;
+        }
+
+        // Bez rozszerzenia cURL nie ma ani tego transportu, ani jego stałych.
+        if (!$app->get('proxy_enable') || !\defined('CURLOPT_PROXY')) {
+            return $opcje;
+        }
+
+        $curl = [CURLOPT_PROXY => $app->get('proxy_host') . ':' . $app->get('proxy_port')];
+
+        if ($user = $app->get('proxy_user')) {
+            $curl[CURLOPT_PROXYUSERPWD] = $user . ':' . $app->get('proxy_pass');
+        }
+
+        return $opcje + ['transport.curl' => $curl];
     }
 }

@@ -15,6 +15,12 @@ defined('_JEXEC') or die('Restricted access');
 
 $params = $this->element->payment_params ?? new stdClass();
 $wersja = \Pablop76\Plugin\HikashopPayment\Przelewy24\Extension\Przelewy24::installedVersion();
+
+// Zapisanych kluczy nie wypisujemy w źródle strony. Puste pole przy zapisie
+// zostawia klucz bez zmian, patrz onPaymentConfigurationSave().
+$zapisany = fn (string $klucz): string => (string) ($params->$klucz ?? '') !== ''
+    ? ' placeholder="' . $this->escape(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_SECRET_SAVED')) . '"'
+    : '';
 ?>
 <tr>
 	<td class="key">
@@ -86,7 +92,7 @@ $wersja = \Pablop76\Plugin\HikashopPayment\Przelewy24\Extension\Przelewy24::inst
 	<td>
 		<input type="password" autocomplete="off" size="40"
 		       name="data[payment][payment_params][crc_key]"
-		       value="<?php echo $this->escape($params->crc_key ?? ''); ?>" />
+		       value=""<?php echo $zapisany('crc_key'); ?> />
 		<p class="hikashop_help">
 			<?php echo Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_CRC_KEY_HELP'); ?>
 		</p>
@@ -101,7 +107,7 @@ $wersja = \Pablop76\Plugin\HikashopPayment\Przelewy24\Extension\Przelewy24::inst
 	<td>
 		<input type="password" autocomplete="off" size="40"
 		       name="data[payment][payment_params][api_key]"
-		       value="<?php echo $this->escape($params->api_key ?? ''); ?>" />
+		       value=""<?php echo $zapisany('api_key'); ?> />
 		<p class="hikashop_help">
 			<?php echo Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_API_KEY_HELP'); ?>
 		</p>

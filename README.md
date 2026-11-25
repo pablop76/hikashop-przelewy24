@@ -22,10 +22,10 @@ Wtyczka powstaje etapami. Rdzeń integracji jest gotowy i pokryty testami.
 | Przekierowanie na stronę płatności P24 | gotowe |
 | Formularz konfiguracji, tłumaczenia pl i en, paczka instalacyjna | gotowe |
 | Zwroty | poza wtyczką, robi się je w panelu Przelewy24 |
-| Pełny przebieg zapłaty w sandboksie | wymaga adresu osiągalnego z internetu |
+| Pełny przebieg zapłaty w sandboksie | sprawdzony na serwerze testowym widocznym z internetu |
 | BLIK z kodem w sklepie | gotowe |
 | Karta w sklepie, Apple Pay, Google Pay | przepływ ustalony, do zbudowania |
-| Raty | gotowe, przez narzuconą metodę 303 |
+| Raty | przez narzuconą metodę 303, niesprawdzone (sandbox nie ma metod ratalnych) |
 
 ### Zwroty
 
@@ -97,11 +97,15 @@ klient krążył przez to między wyborem metody a stroną z samą kwotą i nie
 docierał do bramki. Kod zapamiętany w sesji z porzuconej kasy jest tam
 pomijany, bo dawno stracił ważność.
 
-Trzy rzeczy rozstrzygnięte świadomie:
+Rzeczy rozstrzygnięte świadomie:
 
-**Kod nie trafia do bazy.** Jest jednorazowy i ważny około dwóch minut, więc
-żyje tylko w stanie sesji i jest z niej usuwany w chwili użycia. Inaczej
-groziłby wysłaniem przy następnym zamówieniu, gdy jest już nieważny.
+**Kod nie trafia do zamówienia ani do dziennika.** Jest jednorazowy i ważny
+około dwóch minut, więc żyje tylko w stanie sesji Joomli i jest z niej usuwany
+w chwili użycia. Inaczej groziłby wysłaniem przy następnym zamówieniu, gdy jest
+już nieważny. Uwaga: gdy Joomla trzyma sesje w bazie (domyślne ustawienie
+„Obsługa sesji: Baza danych”), kod leży w tabeli sesji do złożenia zamówienia
+albo do końca sesji, jeśli klient zmieni metodę płatności. Po dwóch minutach
+nie da się nim już zapłacić.
 
 **Zużytego kodu nie wysyłamy drugi raz.** Gdy P24 odpowie kodem 35, czyli
 „kod już użyty", obciążenie mogło dojść do skutku, a tylko odpowiedź do nas
@@ -116,9 +120,10 @@ choć mógł już potwierdzić płatność w aplikacji banku i zapłacić drugi 
 1.0.11 trafia na stronę oczekiwania, która sama pyta P24 o stan. Za odrzucenie
 uchodzi tylko odpowiedź 4xx.
 
-**Nie każde odrzucenie pozwala spróbować jeszcze raz.** Przy przeterminowanym
-albo błędnym kodzie prosimy o nowy. Przy braku środków czy odmowie banku nowy
-kod niczego nie zmieni, więc od razu kierujemy klienta do innej metody.
+**Komunikat mówi, co dalej.** Przy przeterminowanym albo błędnym kodzie
+klient czyta, że ma wygenerować nowy, a przy braku środków czy odmowie banku,
+że ma wybrać inny sposób zapłaty. W obu przypadkach przycisk prowadzi na
+stronę płatności P24, gdzie jest i BLIK, i pozostałe metody.
 
 #### Strona oczekiwania na potwierdzenie
 
@@ -199,7 +204,7 @@ Przepływ według specyfikacji P24, w kolejności:
 
 1. Przeglądarka ładuje `https://{sandbox|secure}.przelewy24.pl/js/cardTokenizationIframe.min.js`
 2. `new Przelewy24CardTokenization(merchantId, sessionId, sign)`, gdzie
-   `sign` to `sha384({merchantId, sessionId, crc})` — u nas `Signature::forCardForm()`
+   `sign` to `sha384({merchantId, sessionId, crc})`
 3. `P24.render(typ, '#id', opcje)` rysuje formularz w iframe.
    `P24.clear('card'|'cvv'|'exp'|'cardholder')` czyści wybrane pole
 4. Zdarzenie `success` niesie `refId`, czyli token karty
@@ -374,8 +379,8 @@ do kasy, a ta po złożeniu zamówienia jest pusta. Własne „zapłać teraz”
 klient zostawał bez wyjścia.
 
 Od 1.0.4 przycisk prowadzi do wtyczki (zadanie `notify` z `p24_action=retry`),
-która rejestruje transakcję z tym samym `sessionId` i od razu przekierowuje na
-stronę płatności P24. Adres niesie znacznik wyprowadzony z `order_token`
+która najpierw pyta P24 o wcześniejsze próby, potem rejestruje transakcję
+z nowym `sessionId` (patrz wyżej) i od razu przekierowuje na stronę płatności P24. Adres niesie znacznik wyprowadzony z `order_token`
 zamówienia, inny niż znacznik powiadomień, więc nie da się go ułożyć dla
 cudzego zamówienia. Zamówienia opłaconego, anulowanego ani zwróconego nie da
 się w ten sposób opłacić ponownie.
@@ -383,6 +388,13 @@ się w ten sposób opłacić ponownie.
 **Powiadomienia są weryfikowane.** Sprawdzamy podpis, identyfikator sprzedawcy,
 zgodność sesji z zapisaną przy zamówieniu oraz kwotę i walutę. Niezgodność
 w którymkolwiek z tych punktów oznacza, że zamówienia nie wolno ruszyć.
+
+Powiadomienie z poprawnym podpisem, ale z kwotą albo walutą inną niż zamówienie,
+to prawdziwa wpłata, której wtyczka nie potwierdza. Od 1.0.14 sprzedawca dostaje
+wtedy jedną wiadomość na adres powiadomień o płatnościach, tak samo jak przy
+błędzie weryfikacji. To samo dzieje się, gdy taką wpłatę znajdzie pytanie do P24
+przy powrocie klienta albo ponowieniu. Druga wpłata za zamówienie już
+zweryfikowane wiadomości nie wywołuje.
 
 **O tym, czy zapłata jest potwierdzona, decyduje nasz znacznik, nie status
 zamówienia.** Po udanym `transaction/verify` wtyczka zapisuje przy zamówieniu
@@ -395,8 +407,9 @@ Sam status tego nie rozstrzyga, bo sprzedawca zmienia go ręcznie:
 - zamówienie, które ma już status opłaconego albo poszło do wysyłki, **nie jest
   cofane** do statusu potwierdzenia i klient nie dostaje drugiego e-maila.
   Za opłacone uchodzą statusy, w których HikaShop wystawia fakturę
-- drugiej, osobnej wpłaty za zweryfikowane zamówienie nie weryfikujemy, więc
-  wraca ona do klienta
+- drugiej, osobnej wpłaty za zweryfikowane zamówienie nie weryfikujemy. Według
+  specyfikacji P24 wpłata bez weryfikacji zostaje w Przelewach24 jako przedpłata
+  do dyspozycji klienta, a sprzedawca jej nie dostaje
 
 **Równoległe żądania czekają na siebie.** Powiadomienie z P24 i klient
 wracający z bramki przychodzą zwykle w tej samej sekundzie. Do 1.0.10 oba
@@ -441,6 +454,12 @@ zaczyna, a klient widzi, w czym rzecz.
 **Sekrety nie trafiają do logu.** `Logger` wymazuje wartości klucza API i CRC
 zarówno z pól kontekstu, jak i z treści komunikatów.
 
+**Formularz konfiguracji nie pokazuje kluczy.** Do 1.0.13 klucz CRC i klucz API
+stały w źródle strony panelu jako wartość pola hasła. Od 1.0.14 pola są puste,
+z dopiskiem, że klucz jest zapisany. Puste pole przy zapisie zostawia zapisany
+klucz bez zmian, a wpisanie nowej wartości go zastępuje. W bazie klucze nadal
+leżą jawnie, tak jak u wszystkich wtyczek płatności HikaShopa.
+
 ## Zachowania P24 ustalone na sandboksie
 
 Sprawdzone 23.09.2026 i 07.10.2026 na koncie testowym. Warto je znać, bo
@@ -458,7 +477,8 @@ stare API formularzowe i w REST jest nieużywany. Loginem jest identyfikator
 sprzedawcy. Dokumentacja mówi w tym miejscu o `posId`, ale oficjalna wtyczka
 Przelewy24 dla WooCommerce loguje się identyfikatorem sprzedawcy, więc robimy
 tak samo. Na koncie, na którym oba identyfikatory są równe, tej różnicy nie
-da się sprawdzić.
+da się sprawdzić. Gdy w konfiguracji metody numer sklepu różni się od numeru
+sprzedawcy, panel o tym przypomina.
 
 **`transaction/by/sessionId` zmienia odpowiedź razem z losem transakcji.**
 Dopóki klient nie wybrał sposobu zapłaty, P24 odpowiada `HTTP 404 Transaction

@@ -244,6 +244,103 @@ sprawdz('stary HikaShop nie blokuje odinstalowania', $przyHikaShopie('5.1.2', 'u
 sprawdz('nieczytelna wersja HikaShopa nie blokuje instalacji', $przyHikaShopie(null) === true);
 $manifestHs->setValue($instalator, $prawdziwy);
 
+echo PHP_EOL . '9. Formularz konfiguracji nie wypisuje kluczy' . PHP_EOL;
+
+// Do 1.0.13 klucz CRC i klucz API staly w zrodle strony panelu.
+$dopiskZapisany = htmlspecialchars(Joomla\CMS\Language\Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_SECRET_SAVED'), ENT_QUOTES, 'UTF-8');
+$widokKonfiguracji->element = (object) ['payment_params' => (object) ['crc_key' => 'tajnyCRC-0123456', 'api_key' => 'tajnyKLUCZ-abcdef9']];
+$zKluczami = $widokKonfiguracji->wyrysuj($katalog . '/przelewy24_configuration.php');
+
+sprawdz('klucza CRC nie ma w zrodle strony', !str_contains($zKluczami, 'tajnyCRC-0123456'));
+sprawdz('klucza API nie ma w zrodle strony', !str_contains($zKluczami, 'tajnyKLUCZ-abcdef9'));
+sprawdz('oba pola mowia, ze klucz jest zapisany', $dopiskZapisany !== 'PLG_HIKASHOPPAYMENT_PRZELEWY24_SECRET_SAVED' && substr_count($zKluczami, $dopiskZapisany) === 2);
+sprawdz('bez zapisanych kluczy pola bez dopisku', !str_contains($formularz, $dopiskZapisany));
+
+// Puste pole przy zapisie zostawia klucz z bazy. Metody w bazie test nie zmienia:
+// hook dostaje element, a zapis robi dopiero HikaShop.
+$metodaSklepu = metodaPlatnosciP24();
+$wBazie       = hikashop_get('class.payment')->get($metodaSklepu['id'])->payment_params;
+$zapisz       = static function (array $parametry, int $id) use ($wtyczka): object {
+    $element = (object) ['payment_id' => $id, 'payment_params' => (object) $parametry];
+    $wtyczka->onPaymentConfigurationSave($element);
+
+    return $element->payment_params;
+};
+
+$poZapisie = $zapisz(['crc_key' => '', 'api_key' => '  '], $metodaSklepu['id']);
+sprawdz('metoda w bazie ma klucze, wiec jest co zachowac', (string) ($wBazie->crc_key ?? '') !== '' && (string) ($wBazie->api_key ?? '') !== '');
+sprawdz('puste pole CRC: zostaje klucz z bazy', $poZapisie->crc_key === $wBazie->crc_key);
+sprawdz('puste pole API: zostaje klucz z bazy', $poZapisie->api_key === $wBazie->api_key);
+
+$poZapisie = $zapisz(['crc_key' => 'nowy-crc-123456', 'api_key' => ''], $metodaSklepu['id']);
+sprawdz('wpisany klucz zastepuje zapisany', $poZapisie->crc_key === 'nowy-crc-123456' && $poZapisie->api_key === $wBazie->api_key);
+
+$poZapisie = $zapisz(['crc_key' => '', 'api_key' => ''], 0);
+sprawdz('nowa metoda: puste pola zostaja puste', $poZapisie->crc_key === '' && $poZapisie->api_key === '');
+
+echo PHP_EOL . '10. Klient HTTP z frameworka Joomli, z proxy witryny' . PHP_EOL;
+
+// Klient HTTP z CMS zniknie w Joomli 8. Zamiennik z frameworka sam nie bierze
+// proxy witryny, wiec wtyczka podaje je w opcjach cURL.
+$klientApi = new Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\ApiClient(
+    $metodaSklepu['config'],
+    new Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Logger('przelewy24', false, [], static function (): void {})
+);
+$http = (new ReflectionMethod($klientApi, 'getHttp'))->invoke($klientApi);
+
+sprawdz('klient HTTP z frameworka, nie z CMS', get_class($http) === Joomla\Http\Http::class, get_class($http));
+sprawdz('limit czasu 45 sekund', $http->getOption('timeout') === 45);
+sprawdz('naglowek User-Agent Joomli, jak w kliencie z CMS', $http->getOption('userAgent') === (new Joomla\CMS\Version())->getUserAgent('Joomla', true, false), (string) $http->getOption('userAgent'));
+sprawdz('bez proxy w witrynie: bez opcji cURL', $http->getOption('transport.curl') === null);
+
+$aplikacja = Joomla\CMS\Factory::getApplication();
+$proxyPrzed = [];
+
+foreach (['proxy_enable' => 1, 'proxy_host' => 'proxy.test', 'proxy_port' => 3128, 'proxy_user' => 'uzytkownik', 'proxy_pass' => 'haslo'] as $pole => $wartosc) {
+    $proxyPrzed[$pole] = $aplikacja->get($pole);
+    $aplikacja->set($pole, $wartosc);
+}
+
+$opcjeZProxy = Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\ApiClient::httpOptions();
+
+foreach ($proxyPrzed as $pole => $wartosc) {
+    $aplikacja->set($pole, $wartosc);
+}
+
+sprawdz('proxy witryny trafia do opcji cURL', ($opcjeZProxy['transport.curl'][CURLOPT_PROXY] ?? '') === 'proxy.test:3128');
+sprawdz('dane logowania do proxy tez', ($opcjeZProxy['transport.curl'][CURLOPT_PROXYUSERPWD] ?? '') === 'uzytkownik:haslo');
+
+echo PHP_EOL . '11. Komunikaty w konfiguracji metody (panel administratora)' . PHP_EOL;
+
+// Komunikaty pojawiaja sie tylko w panelu, wiec ta sekcja przelacza aplikacje
+// na administratora. Musi byc ostatnia.
+$admin = Joomla\CMS\Factory::getContainer()->get(Joomla\CMS\Application\AdministratorApplication::class);
+Joomla\CMS\Factory::$application = $admin;
+$admin->loadLanguage(Joomla\CMS\Language\Language::getInstance(Joomla\CMS\Factory::getContainer()->get('config')->get('language', 'en-GB')));
+Joomla\CMS\Factory::$language = $admin->getLanguage();
+$admin->getLanguage()->load('plg_hikashoppayment_przelewy24', JPATH_ADMINISTRATOR);
+
+/**
+ * Teksty komunikatow, ktore panel pokazuje przy danych ustawieniach metody.
+ *
+ * @return list<string>
+ */
+$komunikaty = static function (array $parametry) use ($wtyczka, $admin): array {
+    $admin->getMessageQueue(true);
+    $element = (object) ['payment_type' => 'przelewy24', 'payment_params' => (object) ($parametry + ['merchant_id' => '12345', 'crc_key' => 'x', 'api_key' => 'y'])];
+    $wtyczka->onPaymentConfiguration($element);
+
+    return array_column($admin->getMessageQueue(true), 'message');
+};
+$tekst = static fn (string $klucz): string => Joomla\CMS\Language\Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_' . $klucz);
+
+sprawdz('tryb testowy: ostrzezenie', in_array($tekst('SANDBOX_WARNING'), $komunikaty(['test_mode' => '1']), true));
+sprawdz('produkcja: bez ostrzezenia o trybie testowym', !in_array($tekst('SANDBOX_WARNING'), $komunikaty(['test_mode' => '0']), true));
+sprawdz('rozne numery sprzedawcy i sklepu: przypomnienie', in_array($tekst('POS_DIFFERS'), $komunikaty(['pos_id' => '67890']), true));
+sprawdz('puste pole numeru sklepu: bez przypomnienia', !in_array($tekst('POS_DIFFERS'), $komunikaty(['pos_id' => '']), true));
+sprawdz('rowne numery: bez przypomnienia', !in_array($tekst('POS_DIFFERS'), $komunikaty(['pos_id' => '12345']), true));
+sprawdz('teksty komunikatow sa przetlumaczone', !str_starts_with($tekst('POS_DIFFERS'), 'PLG_') && !str_starts_with($tekst('SANDBOX_WARNING'), 'PLG_'));
+
 echo PHP_EOL . str_repeat('-', 60) . PHP_EOL;
 echo 'Zdane: ' . $zdane . ', niezdane: ' . $bledy . PHP_EOL;
 

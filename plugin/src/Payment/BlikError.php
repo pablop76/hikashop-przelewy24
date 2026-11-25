@@ -141,21 +141,6 @@ enum BlikError: string
     }
 
     /**
-     * Czy warto poprosić klienta o nowy kod BLIK.
-     *
-     * Przy braku środków albo odmowie banku nowy kod niczego nie zmieni,
-     * więc lepiej odesłać klienta do innej metody płatności.
-     */
-    public function allowsRetry(): bool
-    {
-        return match ($this) {
-            self::WrongCode, self::CodeExpired, self::CodeUsed,
-            self::CodeStatus, self::UserTimeout, self::Timeout => true,
-            default => false,
-        };
-    }
-
-    /**
      * Czy kod jednorazowy został już zużyty po stronie P24.
      *
      * Wtedy nie wolno wysyłać go drugi raz: możliwe, że obciążenie

@@ -162,8 +162,8 @@ final class TransactionService
     /**
      * Sprawdza, czy dane dostępowe są przyjmowane przez P24.
      *
-     * Używane w panelu, żeby sprzedawca nie odkrywał literówki w kluczu
-     * dopiero na pierwszym prawdziwym zamówieniu.
+     * Używane przez test sandboksa (tests/sandbox.php) do sprawdzenia
+     * danych dostępowych bez rejestrowania transakcji.
      */
     public function testAccess(): bool
     {

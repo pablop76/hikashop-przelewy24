@@ -32,11 +32,6 @@ final class BlikException extends Przelewy24Exception
         return $this->reason;
     }
 
-    public function allowsRetry(): bool
-    {
-        return $this->reason->allowsRetry();
-    }
-
     public function isCodeConsumed(): bool
     {
         return $this->reason->isCodeConsumed();

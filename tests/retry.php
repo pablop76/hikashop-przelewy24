@@ -522,6 +522,14 @@ foreach (['inna kwota' => $stanWP24(1, 9999), 'inna waluta' => $stanWP24(1, 1234
     wynik("$opis: bez weryfikacji i bez rejestracji", $r['atrapa']->ile(TransportAtrapa::WERYFIKACJA) === 0 && $r['atrapa']->ile(TransportAtrapa::REJESTRACJA) === 0);
     wynik("$opis: zamowienie zostaje nieoplacone", $statusZamowienia() === 'created', $statusZamowienia());
     wynik("$opis: klient ma sie skontaktowac ze sklepem", is_string($r['wynik']) && str_contains($r['wynik'], $tekst('PAID_MISMATCH')) && !str_contains($r['wynik'], 'hikashop_przelewy24_retry'));
+
+    // Do 1.0.13 sprzedawca dowiadywal sie o takiej wplacie tylko z dziennika.
+    $temat = (string) ($r['wtyczka']->alerty[0]->subject ?? '');
+    $poczatekTematu = (string) strstr(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_MISMATCH_ALERT_SUBJECT'), '%s', true);
+    wynik("$opis: sprzedawca dostaje jedna wiadomosc o wplacie", count($r['wtyczka']->alerty) === 1 && $poczatekTematu !== '' && str_starts_with($temat, $poczatekTematu), $temat);
+
+    $r = $ponow($znacznik, $zaplacone($stan));
+    wynik("$opis: drugie klikniecie bez drugiej wiadomosci", $r['wtyczka']->alerty === [], count($r['wtyczka']->alerty) . ' wiadomosci');
 }
 
 $odNowa();
@@ -742,6 +750,55 @@ wynik('bez ustawienia i bez pozycji menu adres zostaje bez niej', !str_contains(
 
 $konfiguracja->set('checkout_itemid', $kasaWSklepie);
 $pomocnik->zDopiskiem('');
+
+// Od HikaShopa 6.8 klient, który wróci z bramki i zatwierdzi ten sam koszyk
+// jeszcze raz, nie dostaje nowego zamówienia: HikaShop woła onAfterOrderConfirm()
+// dla zamówienia już złożonego (rebuildPaymentPage w kontrolerze kasy).
+echo PHP_EOL . '12. Ponowne zatwierdzenie tego samego koszyka (HikaShop 6.8)' . PHP_EOL;
+
+/**
+ * Wywołuje onAfterOrderConfirm() tak, jak robi to rebuildPaymentPage().
+ *
+ * @return array{wtyczka: WtyczkaTestowa, atrapa: TransportAtrapa, html: string}
+ */
+$zatwierdzPonownie = static function (TransportAtrapa $atrapa) use ($orderId, $metoda): array {
+    $dispatcher = Joomla\CMS\Factory::getContainer()->get('dispatcher');
+    $wtyczka    = new WtyczkaTestowa($dispatcher, ['name' => 'przelewy24', 'type' => 'hikashoppayment']);
+    $wtyczka->transport = $atrapa;
+
+    $zamowienie       = hikashop_get('class.order')->loadFullOrder($orderId, false, false);
+    $zamowienie->cart = new stdClass();
+    $idMetody         = (int) $metoda['payment_id'];
+    $metody           = [$idMetody => hikashop_get('class.payment')->get($idMetody)];
+
+    ob_start();
+    $wtyczka->onAfterOrderConfirm($zamowienie, $metody, $idMetody);
+
+    return ['wtyczka' => $wtyczka, 'atrapa' => $atrapa, 'html' => (string) ob_get_clean()];
+};
+
+$odNowa();
+$r      = $zatwierdzPonownie(new TransportAtrapa());
+$adresy = array_column($r['atrapa']->wywolania, 'adres');
+$po     = $daneTransakcji();
+$nowaSesja = (string) ($po->{OrderPaymentData::SESSION_ID} ?? '');
+
+wynik('poprzednia proba nieoplacona: najpierw pytanie o nia w P24', isset($adresy[0]) && str_contains($adresy[0], TransportAtrapa::STAN) && str_contains($adresy[0], $sessionId), $adresy[0] ?? '');
+wynik('potem jedna nowa rejestracja', $r['atrapa']->ile(TransportAtrapa::REJESTRACJA) === 1);
+wynik('nowa sesja, poprzednia na liscie wczesniejszych', $nowaSesja !== $sessionId && in_array($sessionId, (array) ($po->{OrderPaymentData::SESSIONS} ?? []), true), $nowaSesja);
+wynik('klient dostaje strone przejscia do bramki', str_contains($r['html'], 'hikashop_przelewy24_redirect'));
+
+$r = $zatwierdzPonownie(new TransportAtrapa());
+wynik('drugie zatwierdzenie: pytanie o obie wczesniejsze sesje', $r['atrapa']->ile(TransportAtrapa::STAN) === 2, (string) $r['atrapa']->ile(TransportAtrapa::STAN));
+wynik('drugie zatwierdzenie: obie sesje zostaja przy zamowieniu', count(OrderPaymentData::sessionsOf((object) ['order_payment_params' => $daneTransakcji()])) === 3);
+
+// Klient zapłacił w pierwszej próbie, a powiadomienie jeszcze nie doszło.
+$odNowa();
+$r = $zatwierdzPonownie($zaplacone($stanWP24(1)));
+wynik('poprzednia proba oplacona: bez nowej rejestracji', $r['atrapa']->ile(TransportAtrapa::REJESTRACJA) === 0);
+wynik('poprzednia proba oplacona: weryfikacja i status oplacony', $r['atrapa']->ile(TransportAtrapa::WERYFIKACJA) === 1 && $statusZamowienia() === $config->verifiedStatus, $statusZamowienia());
+wynik('poprzednia proba oplacona: klient czyta, ze zaplacil', str_contains($r['html'], 'hikashop_przelewy24_paid') && !str_contains($r['html'], 'hikashop_przelewy24_redirect'));
+$odNowa();
 
 echo PHP_EOL . str_repeat('-', 60) . PHP_EOL;
 echo 'Zdane: ' . $zdane . ', niezdane: ' . $bledy . PHP_EOL;

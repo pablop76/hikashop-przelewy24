@@ -541,6 +541,37 @@ wynik('sandbox: historia zamowienia mowi o zaplacie testowej', $wSandboksie === 
 $wProdukcji = $potwierdzW('0');
 wynik('produkcja: historia bez dopisku o trybie testowym', $wProdukcji !== null && !str_contains($wProdukcji, $dopisek), (string) $wProdukcji);
 
+echo PHP_EOL . '9. Prawdziwa wplata w zlej kwocie: wiadomosc do sprzedawcy' . PHP_EOL;
+
+// Podpis sie zgadza, wiec to wplata od P24, tylko w innej kwocie albo walucie.
+// Do 1.0.13 sprzedawca dowiadywal sie o niej wylacznie z dziennika.
+$poczatekTematu = (string) strstr(Joomla\CMS\Language\Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_MISMATCH_ALERT_SUBJECT'), '%s', true);
+
+$zresetuj();
+$r = $uruchom($powiadomienie(['amount' => 100, 'originAmount' => 100]), $tokenPoprawny);
+wynik('zla kwota: zamowienie bez zmian, bez weryfikacji', $r['wynik'] === false && $r['status'] === 'created' && $r['wywolan'] === 0, $r['status']);
+wynik('zla kwota: sprzedawca dostaje jedna wiadomosc', $r['alertow'] === 1, $r['alertow'] . ' wiadomosci');
+wynik('wiadomosc mowi o wplacie w innej kwocie', $poczatekTematu !== '' && str_starts_with((string) ($r['alert']->subject ?? ''), $poczatekTematu), (string) ($r['alert']->subject ?? ''));
+wynik('wiadomosc podaje kwote z powiadomienia', str_contains((string) ($r['alert']->body ?? ''), '100 gr'));
+
+$r = $uruchom($powiadomienie(['amount' => 100, 'originAmount' => 100]), $tokenPoprawny);
+wynik('powtorzone powiadomienie: bez drugiej wiadomosci', $r['alertow'] === 0, $r['alertow'] . ' wiadomosci');
+
+$zresetuj();
+$r = $uruchom($powiadomienie(['currency' => 'EUR']), $tokenPoprawny);
+wynik('zla waluta: sprzedawca dostaje wiadomosc', $r['alertow'] === 1, $r['alertow'] . ' wiadomosci');
+
+$zresetuj();
+$r = $uruchom($powiadomienie(['amount' => 100, 'sign' => str_repeat('0', 96)]), $tokenPoprawny);
+wynik('zly podpis: bez wiadomosci, bo zadanie nie musi pochodzic od P24', $r['alertow'] === 0, $r['alertow'] . ' wiadomosci');
+
+$r = $uruchom($powiadomienie(['merchantId' => 999999]), $tokenPoprawny);
+wynik('obcy sprzedawca: bez wiadomosci', $r['alertow'] === 0, $r['alertow'] . ' wiadomosci');
+
+$zresetuj('created', [OrderPaymentData::VERIFIED_AT => gmdate('c')]);
+$r = $uruchom($powiadomienie(['amount' => 100, 'originAmount' => 100]), $tokenPoprawny);
+wynik('zamowienie juz zweryfikowane: druga wplata bez wiadomosci', $r['alertow'] === 0, $r['alertow'] . ' wiadomosci');
+
 echo PHP_EOL . str_repeat('-', 60) . PHP_EOL;
 echo 'Zdane: ' . $zdane . ', niezdane: ' . $bledy . PHP_EOL;
 echo 'Zamowienie testowe ' . $orderId . ' zostanie skasowane.' . PHP_EOL;

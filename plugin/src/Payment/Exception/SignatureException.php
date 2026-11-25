@@ -15,6 +15,6 @@ namespace Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception;
  * Oznacza, że żądanie nie pochodzi od P24 albo nie dotyczy tej transakcji.
  * Zamówienia nie wolno wtedy ruszyć.
  */
-final class SignatureException extends Przelewy24Exception
+class SignatureException extends Przelewy24Exception
 {
 }

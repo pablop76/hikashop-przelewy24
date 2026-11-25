@@ -38,7 +38,6 @@ final class RegisterRequest
 
     /**
      * @param  int     $amountInMinorUnits  kwota w groszach
-     * @param  int     $timeLimit           limit w minutach, 0 oznacza limit P24
      * @param  string  $clientIp            IP klienta, wysyłane jako additional.PSU
      * @param  string  $clientUserAgent     przeglądarka klienta, jw.
      * @param  string  $urlBlikNotification adres dodatkowego powiadomienia BLIK
@@ -58,7 +57,6 @@ final class RegisterRequest
         public readonly string $zip = '',
         public readonly string $city = '',
         public readonly string $phone = '',
-        public readonly int $timeLimit = 0,
         public readonly ?int $method = null,
         public readonly string $clientIp = '',
         public readonly string $clientUserAgent = '',
@@ -96,23 +94,19 @@ final class RegisterRequest
         ];
 
         // Pola nieobowiązkowe dokładamy tylko wypełnione: P24 odrzuca
-        // część z nich, gdy przyjdą puste.
+        // część z nich, gdy przyjdą puste. Limity ze specyfikacji P24.
         $optional = [
-            'client'  => self::trimTo($this->client, 50),
-            'address' => self::trimTo($this->address, 50),
+            'client'  => self::trimTo($this->client, 40),
+            'address' => self::trimTo($this->address, 80),
             'zip'     => self::trimTo($this->zip, 10),
             'city'    => self::trimTo($this->city, 50),
-            'phone'   => self::trimTo($this->phone, 12),
+            'phone'   => self::phone($this->phone),
         ];
 
         foreach ($optional as $key => $value) {
             if ($value !== '') {
                 $payload[$key] = $value;
             }
-        }
-
-        if ($this->timeLimit > 0) {
-            $payload['timeLimit'] = min($this->timeLimit, 99);
         }
 
         if ($this->method !== null && $this->method > 0) {
@@ -162,6 +156,21 @@ final class RegisterRequest
         $code = strtolower(substr($language, 0, 2));
 
         return \in_array($code, self::SUPPORTED_LANGUAGES, true) ? $code : 'en';
+    }
+
+    /**
+     * Telefon w limicie 12 znaków albo pusty.
+     *
+     * Do 1.0.13 numer był przycinany jak tekst: „+48 123 456 789” szedł do
+     * P24 jako „+48 123 456 ”, czyli cudzy numer. Bez spacji, myślników
+     * i nawiasów polski numer z kierunkowym ma 12 znaków. Dłuższego nie
+     * wysyłamy wcale, bo pole jest nieobowiązkowe.
+     */
+    private static function phone(string $phone): string
+    {
+        $numer = preg_replace('/[\s\-().\/]+/', '', $phone) ?? '';
+
+        return mb_strlen($numer) <= 12 ? $numer : '';
     }
 
     /**

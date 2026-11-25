@@ -18,15 +18,11 @@ final class Endpoints
 {
     public const TRANSACTION_REGISTER      = 'api/v1/transaction/register';
     public const TRANSACTION_VERIFY        = 'api/v1/transaction/verify';
-    public const TRANSACTION_DO_PAYMENT    = 'api/v1/transaction/doPayment';
     public const TRANSACTION_BY_SESSION_ID = 'api/v1/transaction/by/sessionId/{sessionId}';
-    public const TRANSACTION_REJECT        = 'api/v1/transaction/reject';
 
     public const PAYMENT_METHODS = 'api/v1/payment/methods/{lang}';
-    public const CARD_INFO       = 'api/v1/card/info/{orderId}';
 
     public const BLIK_CHARGE_BY_CODE  = 'api/v1/paymentMethod/blik/chargeByCode';
-    public const BLIK_CHARGE_BY_ALIAS = 'api/v1/paymentMethod/blik/chargeByAlias';
 
     public const TEST_ACCESS = 'api/v1/testAccess';
 

@@ -7,6 +7,7 @@
 
 namespace Pablop76\Plugin\HikashopPayment\Przelewy24\Payment;
 
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\AmountMismatchException;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\SignatureException;
 
 \defined('_JEXEC') or die;
@@ -126,14 +127,15 @@ final class Notification
 
         // Kwota i waluta decydują o tym, czy klient zapłacił tyle, ile miał.
         // Sprawdzamy je tutaj, żeby żadna ścieżka nie mogła tego pominąć.
+        // Podpis już się zgodził, więc to prawdziwa wpłata: osobny wyjątek.
         if (!Amount::equals($expectedAmount, $this->amount)) {
-            throw new SignatureException(
+            throw new AmountMismatchException(
                 'Kwota w powiadomieniu (' . $this->amount . ' gr) różni się od kwoty zamówienia (' . $expectedAmount . ' gr)'
             );
         }
 
         if (strcasecmp($expectedCurrency, $this->currency) !== 0) {
-            throw new SignatureException(
+            throw new AmountMismatchException(
                 'Waluta w powiadomieniu (' . $this->currency . ') różni się od waluty zamówienia (' . $expectedCurrency . ')'
             );
         }

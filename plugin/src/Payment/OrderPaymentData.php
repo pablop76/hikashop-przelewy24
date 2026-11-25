@@ -33,6 +33,9 @@ final class OrderPaymentData
     /** Chwila, w której sprzedawca dostał alert o nieudanej weryfikacji. */
     public const VERIFY_ALERT_AT = 'p24_verify_alert_at';
 
+    /** Chwila, w której sprzedawca dostał alert o wpłacie w złej kwocie lub walucie. */
+    public const MISMATCH_ALERT_AT = 'p24_mismatch_alert_at';
+
     /** Wcześniejsze sesje płatności zamówienia, od najstarszej. */
     public const SESSIONS = 'p24_sessions';
 

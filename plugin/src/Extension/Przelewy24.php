@@ -17,6 +17,7 @@ use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\BlikError;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\BlikNotification;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\BlikService;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Config;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\AmountMismatchException;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\ApiException;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\BlikException;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\ConfigurationException;
@@ -69,7 +70,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
     /**
      * Wersja wtyczki, wysyłana do P24 w nagłówku diagnostycznym.
      */
-    public const VERSION = '1.0.13';
+    public const VERSION = '1.0.14';
 
     protected $autoloadLanguage = true;
 
@@ -291,22 +292,64 @@ class Przelewy24 extends \hikashopPaymentPlugin
                 'notice'
             );
         }
+
+        // Do API wtyczka loguje się numerem sprzedawcy, jak oficjalna wtyczka
+        // P24 dla WooCommerce, a dokumentacja mówi o numerze sklepu. Na kontach
+        // z równymi numerami to bez znaczenia, przy różnych nikt tego nie sprawdzał.
+        if ($config->posId !== $config->merchantId) {
+            $app->enqueueMessage(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_POS_DIFFERS'), 'notice');
+        }
+    }
+
+    /** Klucze, których formularz konfiguracji nie wypisuje. */
+    protected const SECRET_PARAMS = ['crc_key', 'api_key'];
+
+    /**
+     * Puste pole klucza w formularzu oznacza „bez zmian”.
+     *
+     * Formularz konfiguracji nie wypisuje zapisanych kluczy CRC i API: do
+     * 1.0.13 stały w źródle strony panelu. Pole przychodzi więc puste, gdy
+     * sprzedawca go nie ruszał, i bez tej metody zapis skasowałby klucze.
+     */
+    public function onPaymentConfigurationSave(&$element)
+    {
+        $wynik = parent::onPaymentConfigurationSave($element);
+        $id    = (int) ($element->payment_id ?? 0);
+
+        if ($id <= 0 || !isset($element->payment_params) || !\is_object($element->payment_params)) {
+            return $wynik;
+        }
+
+        $zapisane = null;
+
+        foreach (self::SECRET_PARAMS as $klucz) {
+            if (trim((string) ($element->payment_params->$klucz ?? '')) !== '') {
+                continue;
+            }
+
+            $zapisane ??= $this->savedPaymentParams($id);
+
+            if (isset($zapisane->$klucz) && (string) $zapisane->$klucz !== '') {
+                $element->payment_params->$klucz = $zapisane->$klucz;
+            }
+        }
+
+        return $wynik;
     }
 
     /**
-     * Pola konfiguracji, których HikaShop nie umie narysować sam.
+     * Parametry metody płatności zapisane teraz w bazie.
      */
-    public function pluginConfigDisplay($fieldType, $data, $type, $paramsType, $key, $element)
+    protected function savedPaymentParams(int $paymentId): object
     {
-        if ($fieldType !== 'password') {
-            return null;
+        $metoda = hikashop_get('class.payment')->get($paymentId);
+        $params = $metoda->payment_params ?? null;
+
+        if (\is_string($params) && $params !== '') {
+            $params = @unserialize($params, ['allowed_classes' => [\stdClass::class]]);
         }
 
-        $name  = 'data[' . $type . '][' . $paramsType . '][' . $key . ']';
-        $value = $element->$paramsType->$key ?? '';
-
-        return '<input type="password" autocomplete="off" name="' . $this->escape($name) . '"'
-            . ' value="' . $this->escape($value) . '" size="40" />';
+        return \is_object($params) ? $params : new \stdClass();
     }
 
     /**
@@ -637,8 +680,9 @@ class Przelewy24 extends \hikashopPaymentPlugin
 
                 if ($znanaTransakcja > 0 && $znanaTransakcja !== $notification->p24OrderId) {
                     // Druga, osobna wpłata za to samo zamówienie. Nie
-                    // weryfikujemy jej: niezweryfikowana zostaje w P24
-                    // do dyspozycji klienta, czyli do niego wraca.
+                    // weryfikujemy jej: według specyfikacji P24 wpłata bez
+                    // weryfikacji zostaje w P24 jako przedpłata do
+                    // dyspozycji klienta i sprzedawca jej nie dostaje.
                     $logger->warning('Druga transakcja P24 dla zweryfikowanego już zamówienia, nie weryfikuję jej', [
                         'order_id'          => $orderId,
                         'p24_order'         => $notification->p24OrderId,
@@ -681,9 +725,24 @@ class Przelewy24 extends \hikashopPaymentPlugin
             return $this->markVerified($orderId, $config, $logger, [
                 OrderPaymentData::PAID_SESSION => $storedSessionId,
             ]);
+        } catch (AmountMismatchException $exception) {
+            // Podpis się zgadza, więc to prawdziwe powiadomienie P24 o wpłacie,
+            // tylko w innej kwocie albo walucie niż zamówienie. Zamówienia nie
+            // ruszamy, ale klient zapłacił i sprzedawca musi to rozliczyć sam.
+            $logger->error('Powiadomienie odrzucone: wpłata w innej kwocie lub walucie niż zamówienie', [
+                'order_id' => $orderId,
+                'powod'    => $exception->getMessage(),
+            ]);
+
+            // Druga wpłata za zweryfikowane zamówienie wiadomości nie wywołuje.
+            if (OrderPaymentData::getString($dbOrder, OrderPaymentData::VERIFIED_AT) === '') {
+                $this->alertMismatch($orderId, $dbOrder, $exception->getMessage(), $logger);
+            }
+
+            return false;
         } catch (SignatureException $exception) {
-            // Niezgodność podpisu, sesji, kwoty lub waluty. Zamówienia
-            // nie wolno wtedy ruszyć.
+            // Niezgodność podpisu, sesji albo sprzedawcy. Powiadomienie nie
+            // musi pochodzić od P24, więc zamówienia nie wolno ruszyć.
             $logger->error('Powiadomienie odrzucone', [
                 'order_id' => $orderId,
                 'powod'    => $exception->getMessage(),
@@ -952,15 +1011,66 @@ class Przelewy24 extends \hikashopPaymentPlugin
 
     /**
      * Zawiadamia sprzedawcę, że zapłaty nie udało się zweryfikować.
-     *
-     * Jedna wiadomość na zamówienie: P24 ponawia powiadomienie kilka razy
-     * i bez tej blokady każde powtórzenie dokładałoby kolejny e-mail.
-     * Wiadomość idzie na adres powiadomień o płatnościach z konfiguracji
-     * HikaShopa, tą samą drogą, której używają wtyczki rdzenia.
      */
     protected function alertMerchant($orderId, $order, ApiException $exception, Logger $logger)
     {
-        if (\is_object($order) && OrderPaymentData::getString($order, OrderPaymentData::VERIFY_ALERT_AT) !== '') {
+        $numer     = (string) ($order->order_number ?? $orderId);
+        $odpowiedz = $exception->getHttpStatus() > 0
+            ? 'HTTP ' . $exception->getHttpStatus() . ', ' . $exception->getMessage()
+            : $exception->getMessage();
+
+        $this->sendMerchantAlert(
+            (int) $orderId,
+            $order,
+            OrderPaymentData::VERIFY_ALERT_AT,
+            Text::sprintf('PLG_HIKASHOPPAYMENT_PRZELEWY24_VERIFY_ALERT_SUBJECT', $numer),
+            implode("\n\n", [
+                Text::sprintf('PLG_HIKASHOPPAYMENT_PRZELEWY24_VERIFY_ALERT_INTRO', $numer, $logger->redact($odpowiedz)),
+                Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_VERIFY_ALERT_STATE'),
+                Text::sprintf(
+                    'PLG_HIKASHOPPAYMENT_PRZELEWY24_VERIFY_ALERT_CAUSES',
+                    OrderPaymentData::getString(\is_object($order) ? $order : null, OrderPaymentData::SESSION_ID)
+                ),
+            ]),
+            $logger
+        );
+    }
+
+    /**
+     * Zawiadamia sprzedawcę o wpłacie w innej kwocie lub walucie niż zamówienie.
+     *
+     * Wtyczka takiej wpłaty nie weryfikuje, więc zamówienie zostaje
+     * nieopłacone, choć klient zapłacił. Do 1.0.13 sprzedawca dowiadywał się
+     * o tym tylko z dziennika płatności.
+     */
+    protected function alertMismatch($orderId, $order, string $szczegoly, Logger $logger)
+    {
+        $numer = (string) ($order->order_number ?? $orderId);
+
+        $this->sendMerchantAlert(
+            (int) $orderId,
+            $order,
+            OrderPaymentData::MISMATCH_ALERT_AT,
+            Text::sprintf('PLG_HIKASHOPPAYMENT_PRZELEWY24_MISMATCH_ALERT_SUBJECT', $numer),
+            Text::sprintf('PLG_HIKASHOPPAYMENT_PRZELEWY24_MISMATCH_ALERT_BODY', $numer, $logger->redact($szczegoly)),
+            $logger
+        );
+    }
+
+    /**
+     * Wysyła sprzedawcy jedną wiadomość danego rodzaju na zamówienie.
+     *
+     * P24 ponawia powiadomienie kilka razy, a klient potrafi wrócić z bramki
+     * więcej niż raz. Bez znacznika przy zamówieniu każde powtórzenie
+     * dokładałoby kolejny e-mail. Wiadomość idzie na adres powiadomień
+     * o płatnościach z konfiguracji HikaShopa, tą samą drogą, której używają
+     * wtyczki rdzenia.
+     *
+     * @param  string  $znacznik  klucz w danych płatności, pod którym zapisujemy wysyłkę
+     */
+    private function sendMerchantAlert(int $orderId, $order, string $znacznik, string $temat, string $tresc, Logger $logger): void
+    {
+        if (\is_object($order) && OrderPaymentData::getString($order, $znacznik) !== '') {
             return;
         }
 
@@ -977,35 +1087,22 @@ class Przelewy24 extends \hikashopPaymentPlugin
                 return;
             }
 
-            $numer     = (string) ($order->order_number ?? $orderId);
-            $odpowiedz = $exception->getHttpStatus() > 0
-                ? 'HTTP ' . $exception->getHttpStatus() . ', ' . $exception->getMessage()
-                : $exception->getMessage();
-
             $email          = new \stdClass();
-            $email->subject = Text::sprintf('PLG_HIKASHOPPAYMENT_PRZELEWY24_VERIFY_ALERT_SUBJECT', $numer);
-            $email->body    = implode("\n\n", [
-                Text::sprintf('PLG_HIKASHOPPAYMENT_PRZELEWY24_VERIFY_ALERT_INTRO', $numer, $logger->redact($odpowiedz)),
-                Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_VERIFY_ALERT_STATE'),
-                Text::sprintf(
-                    'PLG_HIKASHOPPAYMENT_PRZELEWY24_VERIFY_ALERT_CAUSES',
-                    OrderPaymentData::getString(\is_object($order) ? $order : null, OrderPaymentData::SESSION_ID)
-                ),
-            ]);
+            $email->subject = $temat;
+            $email->body    = $tresc;
 
             // Fałsz w miejscu numeru zamówienia każe klasie bazowej wysłać
             // samą wiadomość, bez zapisywania czegokolwiek w zamówieniu.
             $bezZamowienia = false;
             $this->modifyOrder($bezZamowienia, null, null, $email);
 
-            OrderPaymentData::store((int) $orderId, [
-                OrderPaymentData::VERIFY_ALERT_AT => gmdate('c'),
-            ]);
+            OrderPaymentData::store($orderId, [$znacznik => gmdate('c')]);
 
-            $logger->warning('Sprzedawca zawiadomiony o nieudanej weryfikacji', ['order_id' => $orderId]);
+            $logger->warning('Sprzedawca zawiadomiony', ['order_id' => $orderId, 'temat' => $temat]);
         } catch (Throwable $blad) {
-            $logger->error('Nie udało się zawiadomić sprzedawcy o nieudanej weryfikacji', [
+            $logger->error('Nie udało się zawiadomić sprzedawcy', [
                 'order_id' => $orderId,
+                'temat'    => $temat,
                 'powod'    => $blad->getMessage(),
             ]);
         }
@@ -1196,6 +1293,16 @@ class Przelewy24 extends \hikashopPaymentPlugin
                 'zamowienie_gr' => (int) $expectedAmount,
                 'waluta_p24'    => $waluta,
             ]);
+
+            $this->alertMismatch($orderId, $order, sprintf(
+                'transakcja P24 %d, sesja %s: wpłata %d gr %s, zamówienie %d gr %s',
+                $p24OrderId,
+                $sessionId,
+                $kwota,
+                $waluta,
+                (int) $expectedAmount,
+                (string) $currencyCode
+            ), $logger);
 
             return self::P24_MISMATCH;
         }

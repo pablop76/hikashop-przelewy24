@@ -114,30 +114,6 @@ final class Signature
     }
 
     /**
-     * Podpis formularza karty osadzanego w sklepie.
-     */
-    public static function forCardForm(int $merchantId, string $sessionId, string $crc): string
-    {
-        return self::hash([
-            'merchantId' => $merchantId,
-            'sessionId'  => $sessionId,
-            'crc'        => $crc,
-        ]);
-    }
-
-    /**
-     * Podpis kalkulatora rat.
-     */
-    public static function forInstallments(string $crc, int $posId, int $method): string
-    {
-        return self::hash([
-            'crc'    => $crc,
-            'posId'  => $posId,
-            'method' => $method,
-        ]);
-    }
-
-    /**
      * Porównanie podpisów odporne na atak czasowy.
      */
     public static function matches(string $expected, string $received): bool

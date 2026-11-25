@@ -119,6 +119,9 @@ echo 'Paczka:  ' . $plikPaczki . PHP_EOL;
 echo 'Wersja:  ' . $wersja . PHP_EOL;
 echo 'Plików:  ' . $dodane . PHP_EOL;
 echo 'Rozmiar: ' . number_format(filesize($plikPaczki) / 1024, 1, ',', ' ') . ' kB' . PHP_EOL;
+// Do elementu <sha512> w pliku aktualizacji na gałęzi release: Joomla
+// odrzuci pobraną paczkę, jeśli suma się nie zgadza.
+echo 'SHA-512: ' . hash_file('sha512', $plikPaczki) . PHP_EOL;
 
 if ($pominiete !== []) {
     echo 'Pominięte: ' . implode(', ', $pominiete) . PHP_EOL;

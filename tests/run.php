@@ -304,6 +304,35 @@ try {
 sprawdz('tresc, ktora nie jest JSON-em, konczy sie wyjatkiem', true, $rzucilJson);
 sprawdz('puste zadanie nie przechodzi', true, odrzucenie([], $config, $sesja, 1000, 'PLN') !== '');
 
+/**
+ * Klasa wyjatku, ktorym konczy sie sprawdzenie powiadomienia.
+ */
+function rodzajOdrzucenia(array $dane, Config $config, string $sesja, int $kwota, string $waluta): string
+{
+    try {
+        Notification::fromArray($dane)->assertValid($config, $sesja, $kwota, $waluta);
+
+        return 'przyjete';
+    } catch (Throwable $e) {
+        return (new ReflectionClass($e))->getShortName();
+    }
+}
+
+// Zla kwota przy poprawnym podpisie to prawdziwa wplata, o ktorej musi sie
+// dowiedziec sprzedawca. Zly podpis nie musi pochodzic od P24.
+sprawdz('zla kwota z poprawnym podpisem: wlasny wyjatek', 'AmountMismatchException', rodzajOdrzucenia($poprawne, $config, $sesja, 2000, 'PLN'));
+sprawdz('zla waluta z poprawnym podpisem: wlasny wyjatek', 'AmountMismatchException', rodzajOdrzucenia($innaWaluta, $config, $sesja, 1000, 'PLN'));
+sprawdz('zly podpis: zwykly wyjatek podpisu', 'SignatureException', rodzajOdrzucenia($zlyPodpis, $config, $sesja, 2000, 'PLN'));
+sprawdz('obcy sprzedawca: zwykly wyjatek podpisu', 'SignatureException', rodzajOdrzucenia($obcySprzedawca, $config, $sesja, 2000, 'PLN'));
+
+// Do 1.0.13 testy mialy zawsze originAmount rowne amount, wiec zamiana tych
+// pol w podpisie przechodzila niezauwazona.
+sprawdz(
+    'podpis powiadomienia odroznia originAmount od amount',
+    hash('sha384', '{"merchantId":12345,"posId":12345,"sessionId":"abc","amount":1000,"originAmount":1005,"currency":"PLN","orderId":98765,"methodId":154,"statement":"opis","crc":"' . $crc . '"}'),
+    Signature::forNotification(12345, 12345, 'abc', 1000, 1005, 'PLN', 98765, 154, 'opis', $crc)
+);
+
 sekcja('RegisterRequest: tresc zadania rejestracji');
 $zadanie = new RegisterRequest(
     sessionId: $sesja,
@@ -328,6 +357,33 @@ sprawdz('podpis zgadza sie z osobno wyliczonym', Signature::forRegister($sesja, 
 sprawdz('puste pola nieobowiazkowe nie trafiaja do zadania', false, array_key_exists('phone', $tresc));
 sprawdz('wypelnione pole nieobowiazkowe trafia', 'Warszawa', $tresc['city']);
 sprawdz('kodowanie jest zadeklarowane', 'UTF-8', $tresc['encoding']);
+
+/**
+ * Tresc rejestracji z podanymi danymi klienta.
+ *
+ * @return array<string, mixed>
+ */
+$zKlientem = static fn (string $klient = '', string $adres = '', string $telefon = ''): array => (new RegisterRequest(
+    sessionId: $sesja,
+    amountInMinorUnits: 100,
+    currency: 'PLN',
+    description: 'test',
+    email: 'a@example.invalid',
+    urlReturn: 'https://sklep.test/r',
+    urlStatus: 'https://sklep.test/n',
+    client: $klient,
+    address: $adres,
+    phone: $telefon
+))->toPayload($config);
+
+// Limity ze specyfikacji P24: client 40, address 80, phone 12 znakow.
+sprawdz('klient przyciety do 40 znakow', 40, mb_strlen($zKlientem(str_repeat('Ż', 45))['client']));
+sprawdz('adres do 80 znakow nie jest przycinany', 70, mb_strlen($zKlientem('', str_repeat('ą', 70))['address']));
+sprawdz('adres przyciety do 80 znakow', 80, mb_strlen($zKlientem('', str_repeat('ą', 85))['address']));
+// Do 1.0.13 telefon byl obcinany jak tekst i do P24 szedl cudzy numer.
+sprawdz('telefon ze spacjami idzie bez nich, w calosci', '+48123456789', $zKlientem('', '', '+48 123 456 789')['phone'] ?? null);
+sprawdz('telefon z myslnikami i nawiasami', '0123456789', $zKlientem('', '', '(012) 345-67-89')['phone'] ?? null);
+sprawdz('za dlugi telefon nie idzie wcale', false, array_key_exists('phone', $zKlientem('', '', '+48 123 456 789 wew. 12')));
 
 $zadanieObcyJezyk = new RegisterRequest(
     sessionId: $sesja,

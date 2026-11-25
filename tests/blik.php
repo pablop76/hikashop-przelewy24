@@ -119,11 +119,7 @@ wynik('62 to odmowa banku', BlikError::IssuerDeclined, BlikError::fromCode(62));
 wynik('nieznany numer daje blad ogolny', BlikError::GeneralError, BlikError::fromCode(9999));
 wynik('brak numeru daje blad ogolny', BlikError::GeneralError, BlikError::fromCode(null));
 
-echo PHP_EOL . '4. Czy wolno prosic o nowy kod' . PHP_EOL;
-wynik('przeterminowany kod pozwala ponowic', true, BlikError::CodeExpired->allowsRetry());
-wynik('zly kod pozwala ponowic', true, BlikError::WrongCode->allowsRetry());
-wynik('brak srodkow nie pozwala ponowic', false, BlikError::InsufficientFunds->allowsRetry());
-wynik('odmowa banku nie pozwala ponowic', false, BlikError::IssuerDeclined->allowsRetry());
+echo PHP_EOL . '4. Ktory kod jest juz zuzyty' . PHP_EOL;
 wynik('tylko zuzyty kod jest oznaczony jako skonsumowany', true, BlikError::CodeUsed->isCodeConsumed());
 wynik('przeterminowany nie jest skonsumowany', false, BlikError::CodeExpired->isCodeConsumed());
 
