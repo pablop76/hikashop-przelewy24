@@ -69,7 +69,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
     /**
      * Wersja wtyczki, wysyłana do P24 w nagłówku diagnostycznym.
      */
-    public const VERSION = '1.0.11';
+    public const VERSION = '1.0.12';
 
     protected $autoloadLanguage = true;
 
@@ -271,7 +271,11 @@ class Przelewy24 extends \hikashopPaymentPlugin
             $app->enqueueMessage(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_KEYS_REQUIRED'), 'warning');
         }
 
-        if (!$config->environment->isSandbox()) {
+        // Tryb testowy jest domyślny, a zamówienia opłacone w nim dostają
+        // status opłaconego bez prawdziwej wpłaty.
+        if ($config->environment->isSandbox()) {
+            $app->enqueueMessage(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_SANDBOX_WARNING'), 'warning');
+        } else {
             $app->enqueueMessage(Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_PRODUCTION_WARNING'), 'notice');
         }
 
@@ -1064,10 +1068,18 @@ class Przelewy24 extends \hikashopPaymentPlugin
             return true;
         }
 
+        // W sandboksie P24 nie przelewa pieniędzy. Sklep uruchomiony w trybie
+        // testowym potwierdzałby zamówienia bez wpłaty i nic w panelu by tego
+        // nie zdradzało, więc dopisek trafia do historii zamówienia. Dane
+        // historii widzi sprzedawca, nie klient.
+        $historia = $config->environment->isSandbox()
+            ? ['notified' => 1, 'data' => Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_SANDBOX_HISTORY')]
+            : true;
+
         // Zmiana statusu wysyła też powiadomienie do klienta. Gdyby
         // wysyłka się wywróciła, zapłata i tak jest zaksięgowana.
         try {
-            $this->modifyOrder($orderId, $config->verifiedStatus, true, true);
+            $this->modifyOrder($orderId, $config->verifiedStatus, $historia, true);
         } catch (Throwable $exception) {
             $logger->error('Błąd przy zmianie statusu zamówienia', [
                 'order_id' => $orderId,

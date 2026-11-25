@@ -408,6 +408,15 @@ danych płatności idą pod blokadą zamówienia (`GET_LOCK` serwera bazy, klasa
 `OrderLock`). Drugie żądanie czeka do 10 sekund. Gdy blokady nie da się
 wziąć, praca idzie bez niej, tak jak wcześniej, i dziennik to odnotowuje.
 
+**Tryb testowy zostawia ślad.** Nowa metoda płatności startuje w trybie
+testowym (sandbox), żeby przed wpisaniem właściwych danych nic nie poszło na
+produkcję. W sandboksie Przelewy24 nie przelewa pieniędzy, a zamówienie i tak
+dostaje status opłaconego. Do 1.0.11 sklep uruchomiony przez pomyłkę w trybie
+testowym niczym się nie wyróżniał. Od 1.0.12 konfiguracja metody płatności
+ostrzega, że tryb testowy jest włączony, a każde zamówienie opłacone w sandboksie
+ma w historii dopisek „zapłata testowa, bez prawdziwej wpłaty”. Dopisek widzi
+sprzedawca w panelu zamówienia, klient go nie dostaje.
+
 **Błąd weryfikacji nie zmienia statusu zamówienia.** Przelewy24 wysyłają
 powiadomienia tylko dla transakcji opłaconych. Jeżeli po poprawnie podpisanym
 powiadomieniu weryfikacja kończy się błędem (401, 400, 500, brak odpowiedzi),

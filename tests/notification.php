@@ -506,6 +506,41 @@ $zresetuj();
 $r = $uruchom($powiadomienie(['sessionId' => $staraSesja]), $tokenPoprawny);
 wynik('sesja spoza listy zamowienia: bez weryfikacji', $r['wywolan'] === 0 && $r['status'] === 'created', $r['status']);
 
+echo PHP_EOL . '8. Zaplata w trybie testowym zostawia slad w historii' . PHP_EOL;
+
+// W sandboksie P24 nie przelewa pieniedzy. Do 1.0.11 sklep uruchomiony
+// w trybie testowym potwierdzal zamowienia bez wplaty i nic tego nie zdradzalo.
+Joomla\CMS\Factory::getApplication()->getLanguage()->load('plg_hikashoppayment_przelewy24', JPATH_ADMINISTRATOR);
+$dopisek = Joomla\CMS\Language\Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_SANDBOX_HISTORY');
+
+/**
+ * Potwierdza zaplate w podanym trybie i zwraca tekst wpisu historii,
+ * ktorym zamowienie dostalo status oplaconego.
+ */
+$potwierdzW = static function (string $trybTestowy) use ($zresetuj, $pdo, $prefix, $orderId, $config): ?string {
+    $zresetuj();
+
+    $dispatcher = Joomla\CMS\Factory::getContainer()->get('dispatcher');
+    $wtyczka    = new WtyczkaTestowa($dispatcher, ['name' => 'przelewy24', 'type' => 'hikashoppayment']);
+    $konfig     = Config::fromPaymentParams((object) ['test_mode' => $trybTestowy, 'verified_status' => $config->verifiedStatus]);
+    $logger     = new Logger('przelewy24', false, [], static function (): void {});
+
+    (new ReflectionMethod($wtyczka, 'markVerified'))->invoke($wtyczka, $orderId, $konfig, $logger);
+
+    $q = $pdo->prepare("SELECT history_data FROM {$prefix}hikashop_history WHERE history_order_id = :id AND history_new_status = :status ORDER BY history_id DESC LIMIT 1");
+    $q->execute([':id' => $orderId, ':status' => $config->verifiedStatus]);
+    $wiersz = $q->fetchColumn();
+
+    return $wiersz === false ? null : (string) $wiersz;
+};
+
+$wSandboksie = $potwierdzW('1');
+wynik('tekst dopisku jest przetlumaczony', $dopisek !== 'PLG_HIKASHOPPAYMENT_PRZELEWY24_SANDBOX_HISTORY' && str_contains($dopisek, 'sandbox'), $dopisek);
+wynik('sandbox: historia zamowienia mowi o zaplacie testowej', $wSandboksie === $dopisek, (string) $wSandboksie);
+
+$wProdukcji = $potwierdzW('0');
+wynik('produkcja: historia bez dopisku o trybie testowym', $wProdukcji !== null && !str_contains($wProdukcji, $dopisek), (string) $wProdukcji);
+
 echo PHP_EOL . str_repeat('-', 60) . PHP_EOL;
 echo 'Zdane: ' . $zdane . ', niezdane: ' . $bledy . PHP_EOL;
 echo 'Zamowienie testowe ' . $orderId . ' zostanie skasowane.' . PHP_EOL;
