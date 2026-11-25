@@ -126,18 +126,22 @@ final class OrderPaymentData
             return false;
         }
 
-        $current = $orderClass->get($orderId);
-        $params  = self::read($current);
+        // Odczyt, scalenie i zapis całego pola nie mogą się przeplatać
+        // z zapisem z innego żądania, bo drugi nadpisałby pierwszy.
+        return OrderLock::run($orderId, static function () use ($orderClass, $orderId, $values): bool {
+            $current = $orderClass->get($orderId);
+            $params  = self::read($current);
 
-        foreach ($values as $key => $value) {
-            $params->$key = $value;
-        }
+            foreach ($values as $key => $value) {
+                $params->$key = $value;
+            }
 
-        $update                        = new \stdClass();
-        $update->order_id              = $orderId;
-        $update->order_payment_params  = $params;
+            $update                        = new \stdClass();
+            $update->order_id              = $orderId;
+            $update->order_payment_params  = $params;
 
-        return (bool) $orderClass->save($update);
+            return (bool) $orderClass->save($update);
+        });
     }
 
     /**
@@ -163,15 +167,18 @@ final class OrderPaymentData
         int $amountInMinorUnits,
         string $currency
     ): bool {
-        $zapisane = self::fresh($orderId);
+        // Lista sesji powstaje z odczytu, więc odczyt i zapis idą pod jedną blokadą.
+        return OrderLock::run($orderId, static function () use ($orderId, $sessionId, $amountInMinorUnits, $currency): bool {
+            $zapisane = self::fresh($orderId);
 
-        return self::store($orderId, [
-            self::SESSION_ID => $sessionId,
-            self::SESSIONS   => self::earlierSessions($zapisane, $sessionId),
-            self::AMOUNT     => $amountInMinorUnits,
-            self::CURRENCY   => $currency,
-            self::ATTEMPTS   => self::getInt($zapisane, self::ATTEMPTS) + 1,
-        ]);
+            return self::store($orderId, [
+                self::SESSION_ID => $sessionId,
+                self::SESSIONS   => self::earlierSessions($zapisane, $sessionId),
+                self::AMOUNT     => $amountInMinorUnits,
+                self::CURRENCY   => $currency,
+                self::ATTEMPTS   => self::getInt($zapisane, self::ATTEMPTS) + 1,
+            ]);
+        });
     }
 
     /**

@@ -189,6 +189,16 @@ final class WtyczkaTestowa extends Przelewy24
         return $this->buildThanksUrl($order);
     }
 
+    /** @return array{urlReturn: string, urlStatus: string, urlCardPaymentNotification: string} */
+    public function adresyDlaP24($order): array
+    {
+        return [
+            'urlReturn'                  => $this->buildReturnUrl($order),
+            'urlStatus'                  => $this->buildNotifyUrl($order),
+            'urlCardPaymentNotification' => $this->buildBlikNotifyUrl($order),
+        ];
+    }
+
     /**
      * Ustawia dopisek adresów tak, jak robi to HikaShop po wczytaniu zamówienia.
      */
@@ -619,6 +629,16 @@ wynik('pusty znacznik: P24 nie jest pytane, bez przekierowania', $r['wywolan'] =
 $r = $wroc($znacznik);
 wynik('znacznik ponowienia nie otwiera powrotu', $r['wywolan'] === 0 && $r['wtyczka']->przekierowanie === null);
 
+// Pełny znacznik z adresów wydanych do 1.0.10: transakcja zarejestrowana przed
+// aktualizacją wtyczki może się jeszcze kończyć, gdy klient wraca.
+$pelnyZnacznik = hash_hmac('sha256', 'p24-return|' . $orderId, $orderToken);
+$r = $wroc($pelnyZnacznik, new TransportAtrapa(poAdresie: [TransportAtrapa::STAN => $stanWP24(0)]));
+wynik('znacznik z adresu sprzed 1.0.11 nadal otwiera powrot', $r['wywolan'] > 0 && is_string($r['wynik']) && str_contains($r['wynik'], $tekst('RETURN_UNPAID_TITLE')));
+$r = $wroc(str_repeat('a', 64));
+wynik('obcy znacznik 64-znakowy nie otwiera powrotu', $r['wywolan'] === 0 && $r['wtyczka']->przekierowanie === null);
+$r = $wroc(substr($pelnyZnacznik, 0, 40));
+wynik('znacznik innej dlugosci nie otwiera powrotu', $r['wywolan'] === 0 && $r['wtyczka']->przekierowanie === null);
+
 // Nieudana płatność: P24 zna transakcję, ale wpłaty nie ma.
 $r = $wroc($znacznikPowrotu, new TransportAtrapa(poAdresie: [TransportAtrapa::STAN => $stanWP24(0)]));
 
@@ -690,7 +710,27 @@ foreach ([
     'ponowienie'    => $pomocnik->zDopiskiem($zEmaila)->adresPonowienia($zamowienie),
 ] as $opis => $adresStrony) {
     wynik("$opis: pozycja menu kasy z konfiguracji HikaShopa", str_contains($adresStrony, '&Itemid=987') && !str_contains($adresStrony, 'Itemid=114'), $adresStrony);
-    wynik("$opis: pozycja menu podana raz, znacznik goscia zostaje", substr_count($adresStrony, 'Itemid=') === 1 && str_contains($adresStrony, '&order_token=' . $orderToken));
+    wynik("$opis: pozycja menu podana raz", substr_count($adresStrony, 'Itemid=') === 1, $adresStrony);
+
+    // Adres powrotu idzie do P24 i ma limit długości. Gościa uwierzytelnia
+    // w nim p24_return, a order_token wraca w adresie podziękowania.
+    wynik(
+        $opis === 'powrot' ? 'powrot: bez order_token' : "$opis: znacznik goscia zostaje",
+        str_contains($adresStrony, '&order_token=' . $orderToken) === ($opis !== 'powrot'),
+        $adresStrony
+    );
+}
+
+// P24 przyjmuje urlReturn i urlStatus do 250 znaków. Do 1.0.10 adres
+// powrotu miał ich około 290 i przechodził tylko dlatego, że P24 limitu
+// nie egzekwuje. Sprawdzamy zapas dla adresu sklepu długości 50 znaków,
+// przy siedmiocyfrowym numerze zamówienia i pozycji menu z dopiskiem gościa.
+$limitAdresuSklepu = 50;
+$duzeZamowienie    = (object) ['order_id' => 9999999, 'order_token' => $orderToken];
+
+foreach ($pomocnik->zDopiskiem('&order_token=' . $orderToken . '&Itemid=9999')->adresyDlaP24($duzeZamowienie) as $pole => $adresDlaP24) {
+    $dlugosc = strlen($adresDlaP24) - strlen(HIKASHOP_LIVE) + $limitAdresuSklepu;
+    wynik("$pole miesci sie w 250 znakach przy adresie sklepu do $limitAdresuSklepu znakow", $dlugosc <= 250, $dlugosc . ' znakow: ' . $adresDlaP24);
 }
 
 wynik('pozycja menu kasy takze wtedy, gdy klient przyszedl bez zadnej', str_contains($pomocnik->zDopiskiem('')->adresPodziekowania($zamowienie), '&Itemid=987'));

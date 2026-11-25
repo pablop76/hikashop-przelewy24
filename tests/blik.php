@@ -21,6 +21,7 @@ use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\ApiClient;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\BlikError;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\BlikService;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Config;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\ApiException;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\BlikException;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Logger;
 
@@ -56,13 +57,20 @@ final class TransportBlik implements TransportInterface
      */
     public function __construct(
         private int $kodHttp = 201,
-        private string $odpowiedz = '{"data":{"orderId":123456,"message":"success"},"responseCode":0}'
+        private string $odpowiedz = '{"data":{"orderId":123456,"message":"success"},"responseCode":0}',
+        private bool $zerwij = false
     ) {
     }
 
     public function request($method, UriInterface $uri, $data = null, array $headers = [], $timeout = null, $userAgent = null)
     {
         $this->wywolania[] = ['metoda' => $method, 'adres' => (string) $uri, 'tresc' => $data];
+
+        // Tak kończy się przekroczony czas albo zerwane połączenie: żądanie
+        // mogło dojść do P24, ale odpowiedź do nas nie wróciła.
+        if ($this->zerwij) {
+            throw new RuntimeException('Operation timed out after 45000 milliseconds');
+        }
 
         $strumien = new Stream('php://memory', 'rw');
         $strumien->write($this->odpowiedz);
@@ -209,11 +217,56 @@ wynik(
     BlikError::InsufficientFunds,
     odrzucenieBlik(new TransportBlik(400, '{"error":"No funds","code":61}'), $config)
 );
-wynik(
-    'odpowiedz bez identyfikatora transakcji jest bledem',
-    BlikError::GeneralError,
-    odrzucenieBlik(new TransportBlik(200, '{"data":{}}'), $config)
-);
+echo PHP_EOL . '7a. Kiedy nie wiadomo, czy P24 przyjelo kod' . PHP_EOL;
+
+/**
+ * Wynik obciazenia: przyjete, odrzucone z przyczyna albo nieznane z kodem HTTP.
+ */
+function wynikObciazenia(TransportBlik $transport, Config $config): string
+{
+    try {
+        uslugaBlik($transport, $config)->chargeByCode('TOKEN', '777123');
+
+        return 'przyjete';
+    } catch (BlikException $e) {
+        return 'odrzucone:' . $e->getReason()->value;
+    } catch (ApiException $e) {
+        return 'nieznane:' . $e->getHttpStatus();
+    }
+}
+
+// Do 1.0.10 kazdy z tych przypadkow konczyl sie komunikatem o odrzuceniu
+// i przyciskiem do bramki, choc kod mogl juz zostac przyjety i zuzyty.
+wynik('przekroczony czas to wynik nieznany, nie odrzucenie', 'nieznane:0', wynikObciazenia(new TransportBlik(zerwij: true), $config));
+wynik('awaria P24 (500) to wynik nieznany', 'nieznane:500', wynikObciazenia(new TransportBlik(500, '{"error":"Internal error","code":500}'), $config));
+wynik('nieczytelna odpowiedz to wynik nieznany', 'nieznane:201', wynikObciazenia(new TransportBlik(201, '<html>Bad gateway</html>'), $config));
+wynik('przyjecie bez identyfikatora transakcji to wynik nieznany', 'nieznane:200', wynikObciazenia(new TransportBlik(200, '{"data":{}}'), $config));
+wynik('zly kod (400) to nadal odrzucenie', 'odrzucone:wrong_code', wynikObciazenia(new TransportBlik(400, '{"error":"Incorrect ticket!","code":28}'), $config));
+wynik('brak uslugi (401) to nadal odrzucenie', 'odrzucone:general_error', wynikObciazenia(new TransportBlik(401, '{"error":"Incorrect authentication","code":401}'), $config));
+
+// Co widzi klient. Odrzucenie: komunikat i droga przez strone P24.
+// Wynik nieznany: strona oczekiwania, ktora sama zapyta P24 o stan.
+$wtyczkaBlik = hikashop_import('hikashoppayment', 'przelewy24');
+$obciaz      = new ReflectionMethod($wtyczkaBlik, 'chargeBlik');
+
+$poObciazeniu = static function (TransportBlik $transport) use ($wtyczkaBlik, $obciaz, $config): array {
+    $logger = new Logger('przelewy24', false, $config->secrets(), static function (): void {});
+    $client = new ApiClient($config, $logger, '1.0.0', 'https://haskap.test', new Http([], $transport));
+
+    $wtyczkaBlik->p24_token        = 'TOKEN';
+    $wtyczkaBlik->p24_blik_pending = false;
+    $wtyczkaBlik->p24_blik_error   = '';
+
+    $obciaz->invoke($wtyczkaBlik, (object) ['order_id' => 0], $client, $logger, $config, '777123');
+
+    return ['czeka' => $wtyczkaBlik->p24_blik_pending, 'blad' => $wtyczkaBlik->p24_blik_error !== ''];
+};
+
+wynik('przekroczony czas: klient czeka na wynik zamiast czytac o odrzuceniu', ['czeka' => true, 'blad' => false], $poObciazeniu(new TransportBlik(zerwij: true)));
+wynik('awaria P24: klient czeka na wynik', ['czeka' => true, 'blad' => false], $poObciazeniu(new TransportBlik(503, '{"error":"Service unavailable","code":503}')));
+wynik('zly kod: klient czyta o odrzuceniu', ['czeka' => false, 'blad' => true], $poObciazeniu(new TransportBlik(400, '{"error":"Incorrect ticket!","code":28}')));
+wynik('zuzyty kod: klient czeka na wynik', ['czeka' => true, 'blad' => false], $poObciazeniu(new TransportBlik(400, '{"error":"Ticket used","code":35}')));
+wynik('kod przyjety: klient czeka na potwierdzenie w banku', ['czeka' => true, 'blad' => false], $poObciazeniu(new TransportBlik()));
 
 echo PHP_EOL . '8. Wtyczka' . PHP_EOL;
 

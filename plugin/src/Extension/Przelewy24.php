@@ -23,6 +23,7 @@ use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\ConfigurationEx
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Exception\SignatureException;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Logger;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\Notification;
+use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\OrderLock;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\OrderPaymentData;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\RegisterRequest;
 use Pablop76\Plugin\HikashopPayment\Przelewy24\Payment\SessionId;
@@ -68,7 +69,7 @@ class Przelewy24 extends \hikashopPaymentPlugin
     /**
      * Wersja wtyczki, wysyłana do P24 w nagłówku diagnostycznym.
      */
-    public const VERSION = '1.0.10';
+    public const VERSION = '1.0.11';
 
     protected $autoloadLanguage = true;
 
@@ -867,12 +868,17 @@ class Przelewy24 extends \hikashopPaymentPlugin
                 $this->p24_blik_error = Text::_($exception->getReason()->languageKey());
             }
         } catch (ApiException $exception) {
-            $logger->error('Nie udało się obciążyć kodem BLIK', [
+            // Nie wiadomo, czy P24 przyjęło kod. Komunikat o odrzuceniu
+            // z przyciskiem do bramki prowadził do drugiej zapłaty, gdy klient
+            // potwierdził już płatność w aplikacji banku. Strona oczekiwania
+            // sama zapyta P24 o stan, a po limicie czasu przejdzie na stronę
+            // powrotu z ponowieniem.
+            $logger->warning('Nie wiadomo, czy P24 przyjęło kod BLIK, czekam na wynik', [
                 'order_id' => $order->order_id ?? 0,
                 'http'     => $exception->getHttpStatus(),
             ]);
 
-            $this->p24_blik_error = Text::_('PLG_HIKASHOPPAYMENT_PRZELEWY24_BLIK_ERROR_GENERAL_ERROR');
+            $this->p24_blik_pending = true;
         }
     }
 
@@ -1017,8 +1023,20 @@ class Przelewy24 extends \hikashopPaymentPlugin
         $orderId = (int) $orderId;
 
         // Powiadomienie i klient wracający z bramki potrafią trafić do sklepu
-        // w tej samej chwili. Kto przyszedł drugi, ten niczego nie powtarza:
-        // ani zmiany statusu, ani e-maila do klienta.
+        // w tej samej chwili. Drugi czeka pod blokadą, aż pierwszy skończy,
+        // i niczego nie powtarza: ani zmiany statusu, ani e-maila do klienta.
+        return OrderLock::run(
+            $orderId,
+            fn (): bool => $this->markVerifiedLocked($orderId, $config, $logger, $dane),
+            $logger
+        );
+    }
+
+    /**
+     * Część markVerified() wykonywana pod blokadą zamówienia.
+     */
+    private function markVerifiedLocked(int $orderId, Config $config, Logger $logger, array $dane): bool
+    {
         $przed = $this->getOrder($orderId);
 
         if (\is_object($przed) && OrderPaymentData::getString($przed, OrderPaymentData::VERIFIED_AT) !== '') {
@@ -1290,13 +1308,17 @@ class Przelewy24 extends \hikashopPaymentPlugin
      */
     protected function buildReturnUrl($order)
     {
+        // P24 przyjmuje urlReturn do 250 znaków. Z order_token (32 znaki)
+        // i pełnym znacznikiem adres miał około 290. order_token nie jest tu
+        // potrzebny: wejście uwierzytelnia p24_return, a podziękowanie dostaje
+        // order_token z bazy.
         return HIKASHOP_LIVE . 'index.php?option=com_hikashop&ctrl=checkout&task=notify'
             . '&notif_payment=' . $this->name
             . '&p24_action=return'
             . self::CUSTOMER_PAGE
             . '&order_id=' . (int) $order->order_id
             . '&p24_return=' . $this->returnToken($order)
-            . $this->customerUrlSuffix();
+            . preg_replace('/&order_token=[^&]*/', '', $this->customerUrlSuffix());
     }
 
     /**
@@ -1368,10 +1390,14 @@ class Przelewy24 extends \hikashopPaymentPlugin
 
     /**
      * Znacznik adresu powrotu, osobny od znacznika ponowienia i powiadomień.
+     *
+     * 32 znaki, czyli 128 bitów HMAC: pełne 64 nie mieściły się z resztą
+     * adresu w limicie 250 znaków dla urlReturn. Długość 64 służy tylko
+     * do przyjęcia adresów wydanych przez wtyczkę do 1.0.10.
      */
-    protected function returnToken($order)
+    protected function returnToken($order, $dlugosc = 32)
     {
-        return hash_hmac('sha256', 'p24-return|' . (int) $order->order_id, (string) ($order->order_token ?? ''));
+        return substr(hash_hmac('sha256', 'p24-return|' . (int) $order->order_id, (string) ($order->order_token ?? '')), 0, $dlugosc);
     }
 
     /**
@@ -1505,9 +1531,11 @@ class Przelewy24 extends \hikashopPaymentPlugin
 
         $dbOrder = $this->getOrder($orderId);
 
+        // Adresy powrotu z wtyczki do 1.0.10 niosą pełny, 64-znakowy znacznik,
+        // a zarejestrowane z nimi transakcje mogą trwać w chwili aktualizacji.
         if (empty($dbOrder)
             || !$this->loadPaymentParams($dbOrder)
-            || !hash_equals($this->returnToken($dbOrder), $token)
+            || !hash_equals($this->returnToken($dbOrder, \strlen($token) === 64 ? 64 : 32), $token)
         ) {
             $this->writeToLog('P24 [BŁĄD] Powrót z bramki z błędnym znacznikiem | order_id=' . $orderId);
 

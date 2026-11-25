@@ -64,8 +64,9 @@ final class BlikService
      *
      * @return int  identyfikator transakcji nadany przez P24
      *
-     * @throws BlikException  gdy P24 odrzuciło kod
-     * @throws ApiException   gdy nie udało się porozumieć z P24
+     * @throws BlikException  gdy P24 odrzuciło kod (odpowiedź 4xx)
+     * @throws ApiException   gdy nie wiadomo, czy P24 przyjęło kod: brak odpowiedzi,
+     *                        awaria P24 albo przyjęcie bez identyfikatora transakcji
      */
     public function chargeByCode(string $token, string $code): int
     {
@@ -83,6 +84,15 @@ final class BlikService
                 'blikCode' => $code,
             ]);
         } catch (ApiException $exception) {
+            $http = $exception->getHttpStatus();
+
+            // Odmowę P24 wyraża kodem 4xx. Brak odpowiedzi, błąd 5xx albo
+            // nieczytelna treść nie mówią, czy kod dotarł: mógł zostać
+            // przyjęty i zużyty. To nie jest odrzucenie.
+            if ($http < 400 || $http >= 500) {
+                throw $exception;
+            }
+
             $powod = BlikError::fromCode($exception->getApiCode());
 
             $this->logger->error('P24 odrzuciło kod BLIK', [
@@ -110,9 +120,10 @@ final class BlikService
         if ($p24OrderId <= 0) {
             $this->logger->error('P24 przyjęło kod BLIK, ale nie zwróciło identyfikatora transakcji');
 
-            throw new BlikException(
+            // Kod przyjęty, więc o odrzuceniu mowy być nie może.
+            throw new ApiException(
                 'P24 nie zwróciło identyfikatora transakcji po obciążeniu BLIK',
-                BlikError::GeneralError
+                $response->httpStatus
             );
         }
 

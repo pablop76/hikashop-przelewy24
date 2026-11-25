@@ -108,6 +108,14 @@ groziłby wysłaniem przy następnym zamówieniu, gdy jest już nieważny.
 nie dotarła. Zamówienie zostaje wtedy w stanie oczekiwania na powiadomienie,
 zamiast próbować ponownie.
 
+**Brak odpowiedzi to nie odrzucenie.** Gdy P24 nie odpowie na `chargeByCode`
+(przekroczony czas, zerwane połączenie, błąd 5xx, treść nie do odczytania)
+albo przyjmie kod bez numeru transakcji, nie wiadomo, czy kod dotarł. Do 1.0.10
+klient czytał wtedy, że BLIK się nie udał, i dostawał przycisk do strony P24,
+choć mógł już potwierdzić płatność w aplikacji banku i zapłacić drugi raz. Od
+1.0.11 trafia na stronę oczekiwania, która sama pyta P24 o stan. Za odrzucenie
+uchodzi tylko odpowiedź 4xx.
+
 **Nie każde odrzucenie pozwala spróbować jeszcze raz.** Przy przeterminowanym
 albo błędnym kodzie prosimy o nowy. Przy braku środków czy odmowie banku nowy
 kod niczego nie zmieni, więc od razu kierujemy klienta do innej metody.
@@ -341,6 +349,13 @@ Przycisk „Przejdź do płatności” na stronie przejścia też prowadzi przez
 sklep, a nie wprost do bramki. Klient klika go zwykle po powrocie z bramki
 przyciskiem „wstecz”, a zapisany na stronie adres bramki jest wtedy martwy.
 
+Adres powrotu musi się zmieścić w 250 znakach, bo tyle przyjmuje P24 dla
+`urlReturn`. Dlatego nie niesie `order_token` (klienta uwierzytelnia znacznik
+`p24_return`, a podziękowanie dostaje `order_token` z bazy), a sam znacznik ma
+32 znaki. Starcza to dla adresu sklepu do 50 znaków. Do 1.0.10 adres miał około
+290 znaków i przechodził tylko dlatego, że P24 limitu nie egzekwuje. Adresy
+z 64-znakowym znacznikiem, wydane przed aktualizacją, nadal działają.
+
 Adresy, które otwiera klient (powrót i ponowienie), niosą parametr
 `skip_system_notification=1`. Bez niego wtyczka systemowa HikaShopa
 przechwytuje zadanie `notify` i oddaje wynik bez szablonu witryny, czyli
@@ -382,6 +397,16 @@ Sam status tego nie rozstrzyga, bo sprzedawca zmienia go ręcznie:
   Za opłacone uchodzą statusy, w których HikaShop wystawia fakturę
 - drugiej, osobnej wpłaty za zweryfikowane zamówienie nie weryfikujemy, więc
   wraca ona do klienta
+
+**Równoległe żądania czekają na siebie.** Powiadomienie z P24 i klient
+wracający z bramki przychodzą zwykle w tej samej sekundzie. Do 1.0.10 oba
+potrafiły naraz uznać, że zapłata nie jest jeszcze potwierdzona: status
+zmieniał się dwa razy, a klient dostawał dwa e-maile. Z tego samego powodu
+równoległy zapis danych płatności mógł nadpisać inny, na przykład zgubić
+sesję nowej próby zapłaty. Od 1.0.11 potwierdzenie zapłaty i każdy zapis
+danych płatności idą pod blokadą zamówienia (`GET_LOCK` serwera bazy, klasa
+`OrderLock`). Drugie żądanie czeka do 10 sekund. Gdy blokady nie da się
+wziąć, praca idzie bez niej, tak jak wcześniej, i dziennik to odnotowuje.
 
 **Błąd weryfikacji nie zmienia statusu zamówienia.** Przelewy24 wysyłają
 powiadomienia tylko dla transakcji opłaconych. Jeżeli po poprawnie podpisanym
@@ -504,6 +529,7 @@ tests/
   blik.php                       BLIK w kasie
   blik-oczekiwanie.php           strona oczekiwania BLIK i powiadomienie o odrzuceniu
   duplikaty.php                  ochrona przed podwójną zapłatą
+  rownoleglosc.php               blokada zamówienia przy równoległych żądaniach
   bootstrap-joomla.php           wspólny rozruch testów integracyjnych
 ```
 
@@ -536,7 +562,7 @@ ani od Joomli poza klientem HTTP.
 
 ## Testy
 
-Dziewięć zestawów, każdy o innym zasięgu.
+Dziesięć zestawów, każdy o innym zasięgu.
 
 ```bash
 php tests/run.php          # biblioteka, bez Joomli i bez sieci
@@ -548,6 +574,7 @@ php tests/blik-oczekiwanie.php # strona oczekiwania BLIK i powiadomienie o odrzu
 php tests/duplikaty.php    # sesje zamowienia i ochrona przed podwojna zaplata, zywe P24
 php tests/retry.php        # ponowienie zaplaty, powrot z bramki i wplata, o ktorej sklep nie wie, siec podstawiona atrapa
 php tests/email.php        # adres e-mail klienta, takze goscia
+php tests/rownoleglosc.php # dwa procesy naraz potwierdzaja te sama zaplate, blokada zamowienia
 ```
 
 `run.php` obejmuje przeliczanie kwot, kolejność kluczy w podpisach, odrzucanie
